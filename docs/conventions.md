@@ -1,0 +1,267 @@
+# Engine-wide conventions
+
+The rules that hold across every slice of the engine, in one place. Each entry names the spec
+that introduced it: this document is the current truth, the specs remain the record of why a
+decision was made.
+
+Other documents link here instead of restating these rules. If you find a rule spelled out
+twice, the copy is the one to delete.
+
+- System design: [architecture.md](architecture.md)
+- Behaviour, case by case: [test-cases.md](test-cases.md)
+- Specs and plans: [superpowers/specs/](superpowers/specs/), [superpowers/plans/](superpowers/plans/)
+
+---
+
+## Vocabulary
+
+| Term                   | Meaning                                                                                            |
+| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| **Resource**           | An abstract bookable unit. The engine knows only its scheduling parameters, never what it is       |
+| **Window**             | A stretch of a single date during which a resource is available, from the schedule or an exception |
+| **Slot**               | One bookable quantum, produced by slicing a window by `slot_duration`                              |
+| **Anchor**             | `slot_anchor_time` — where a day-based resource's day begins                                       |
+| **Intraday resource**  | Slot shorter than a day; schedule rules carry both times                                           |
+| **Day-based resource** | Slot measured in calendar days; schedule rules carry null times                                    |
+
+---
+
+## Time and date representation
+
+_Introduced by spec 1._
+
+| Kind        | Format                                               | Example                     |
+| ----------- | ---------------------------------------------------- | --------------------------- |
+| Date        | `YYYY-MM-DD`, interpreted in the resource's timezone | `2026-07-20`                |
+| Time of day | `HH:MM`, 24-hour                                     | `14:00`                     |
+| Timestamp   | ISO-8601 **with offset**                             | `2026-07-20T09:00:00+02:00` |
+| Duration    | Restricted ISO-8601, see below                       | `PT30M`, `P1D`              |
+
+**Timestamps always carry an offset.** Without one a client cannot recover the instant
+unambiguously, and during a fall-back transition the same local time occurs twice. A resource
+in UTC renders as `Z`, not `+00:00`.
+
+**Date ranges are half-open** — `from` inclusive, `to` exclusive. A range wider than
+`MAX_RANGE_DAYS` (default 366) or with `to <= from` is rejected with `invalid_range`.
+
+### Duration grammar
+
+Either `P<n>D`, or `PT[<n>H][<n>M]` with at least one non-zero component and a total below
+24 hours.
+
+Accepted: `PT1M`, `PT30M`, `PT1H`, `PT1H30M`, `PT23H59M`, `P1D`, `P7D`, `P366D`
+Rejected: `PT24H`, `PT0M`, `P0D`, `P367D`, `P1M`, `P1Y`, `P1W`, `P1DT2H`, `PT1S`
+
+**`P1D` and `PT24H` are not interchangeable, and the written form is load-bearing.** `P1D`
+means "from anchor to anchor", which is 23, 24 or 25 real hours depending on daylight saving;
+`PT24H` would mean exactly 24 elapsed hours. Treating them as equal breaks day-based resources
+twice a year, so the `PT` form is capped below 24 hours and never produces a day-based
+resource.
+
+Durations are **canonicalised on input**: `PT0H30M` is stored and reported as `PT30M`.
+Postgres normalizes intervals on storage regardless, so canonicalising first is what keeps a
+resource's reported duration identical to the one that was submitted.
+
+### Timezones
+
+`timezone` must be a **named** IANA zone — `Europe/Warsaw`, `UTC`, `CET`. A fixed offset such
+as `+02:00`, `-05:00` or `+0200` is rejected, even though `Intl` and Luxon accept it as a
+zone: an offset carries no daylight-saving rules, so a Warsaw resource stored that way would
+be an hour off for half the year.
+
+### Local time versus absolute time
+
+Two kinds of time live in this system, and conflating them is the classic source of scheduling
+bugs.
+
+**Absolute instants** — booking start and end — use `timestamptz`. Despite the name, Postgres
+stores no zone in that type: it normalizes to UTC and keeps a point on the timeline, applying
+a zone only on input and output. Bookings are therefore already in UTC.
+
+**Local wall-clock statements** — schedule times, exception dates — use `time` and `date`,
+deliberately without a zone. "This doctor works 09:00–17:00" is a claim about a clock face,
+not an instant. In `Europe/Warsaw`, 09:00 local is 08:00 UTC in winter and 07:00 UTC in
+summer; storing 08:00 UTC would silently move the working day to 10:00 local from the last
+Sunday in March.
+
+This is why `timezone` is immutable after a resource is created. The obstacle is not data
+migration but reinterpretation: no row would move, yet `09:00–17:00` would come to denote a
+different set of instants.
+
+### Day of week
+
+**Monday = 0 … Sunday = 6.**
+
+Three other conventions disagree, and all three are one import away:
+
+| Source                  | Monday | Sunday |
+| ----------------------- | ------ | ------ |
+| This engine             | 0      | 6      |
+| Luxon `weekday`         | 1      | 7      |
+| Postgres `EXTRACT(DOW)` | 1      | 0      |
+| JavaScript `getDay()`   | 1      | 0      |
+
+Exactly one place — `src/shared/time.ts` — may convert between them, and its test asserts all
+seven days explicitly. Without that discipline the resulting bug surfaces only on Sundays.
+
+---
+
+## API conventions
+
+_Introduced by spec 1._
+
+Every error response has the same shape:
+
+```json
+{ "error": "schedule_overlap", "message": "…", "details": {} }
+```
+
+| Code                           | Status | Meaning                                              |
+| ------------------------------ | ------ | ---------------------------------------------------- |
+| `validation_error`             | 400    | Body, query or path failed validation                |
+| `invalid_range`                | 400    | `to <= from`, or wider than `MAX_RANGE_DAYS`         |
+| `schedule_overlap`             | 400    | Two rules on one weekday overlap                     |
+| `schedule_shape_mismatch`      | 400    | Rule shape does not match the slot duration          |
+| `unsupported_concurrency_mode` | 400    | `pool`, until spec 3                                 |
+| `not_found`                    | 404    | No such resource, or no such route                   |
+| `unsupported_media_type`       | 415    | Body sent with a content type the route cannot parse |
+| `internal_error`               | 500    | Anything unexpected                                  |
+
+Framework-level 4xx are translated into this shape too — a caller's mistake must never
+surface as `internal_error`. Unexpected exceptions are logged with a stack trace and returned
+bare: database structure never reaches the client through error text.
+
+Unknown fields in a request body are **rejected**, not ignored. An attempt to patch an
+immutable field therefore fails loudly instead of appearing to succeed.
+
+Responses are serialized against a declared schema, so a field outside the contract cannot
+physically reach the client. This mechanically enforces the engine's first design principle.
+
+### Documentation is generated, never written twice
+
+The OpenAPI document at `/docs/json` is produced from the same TypeBox schemas the routes
+validate against, and the Swagger UI at `/docs` renders it. There is no second description of
+the API to keep in step — a schema change is a documentation change.
+
+Descriptions are built by one function, `md()` in `src/shared/docs.ts`, because Markdown
+spacing has two rules that pull in opposite directions and are easy to get backwards:
+paragraphs need a blank line between them, or they collapse into a single very long line;
+list items need a bare newline between them, or the list renders with a paragraph around every
+item. Pass a string for a paragraph and an array for a list, and both come out right. Tests
+assert the output directly and again on the generated document.
+
+Every route therefore carries `tags`, `summary` and a `response` map in its schema; a test
+asserts this for all of them, and fails if a route is added without them or documented
+without existing.
+
+---
+
+## Technology stack
+
+_Chosen in spec 1._
+
+| Concern    | Choice                                                                            |
+| ---------- | --------------------------------------------------------------------------------- |
+| Runtime    | Node.js 24 LTS — pinned by minor in the image, declared in `.nvmrc` and `engines` |
+| Language   | TypeScript, `strict: true`, NodeNext modules                                      |
+| HTTP       | Fastify 5 with TypeBox schemas                                                    |
+| Database   | PostgreSQL 16                                                                     |
+| DB access  | Kysely + `pg` — a typed query builder, not an ORM                                 |
+| Date/time  | Luxon                                                                             |
+| Tests      | Vitest + Testcontainers                                                           |
+| Formatting | Prettier                                                                          |
+
+Rationale for the load-bearing choices — why a query builder rather than an ORM, why response
+serialization matters — is in [the spec that made them](superpowers/specs/2026-07-27-resources-schedule-availability-design.md).
+
+---
+
+## Code layout
+
+Modules are organised by entity, and each splits into three files:
+
+```
+src/modules/<entity>/
+  <entity>.routes.ts       HTTP layer and TypeBox schemas
+  <entity>.service.ts      business rules and validation
+  <entity>.repository.ts   SQL
+```
+
+Cross-cutting helpers live in `src/shared/`, database wiring in `src/db/`.
+
+**One structural rule is absolute:** `src/modules/availability/slot-generator.ts` must not
+import anything from `src/db/`. It takes windows, a timezone, a duration and an anchor, and
+returns slots. All DST-sensitive arithmetic — the part where bugs actually live — stays a pure
+function testable without Postgres. A `grep` for `db/` in that file must come back empty.
+
+---
+
+## Testing conventions
+
+Tests are written before the implementation, for every slice.
+
+**Test data lives in datasets, not in test bodies.** Cases go in `tests/fixtures/datasets/`
+as typed tables and are consumed by a parameterised runner (`it.each`); shared entities go
+behind factories in `tests/fixtures/`. Extending coverage should mean adding a row, not
+copying a test. Where a specific value _is_ the point — a real DST transition date, a
+boundary — it belongs in the dataset as a named case with its expectation, not buried in an
+assertion.
+
+Facts about the outside world are **derived, not remembered**. The DST transition dates in
+`tests/fixtures/data/dst-transitions.json` came from the tz database via Luxon; covering
+another zone means adding a row there.
+
+Integration tests run against a real PostgreSQL started by Testcontainers, because the
+guarantees that matter — exclusion constraints, row locking, timezone arithmetic — cannot be
+verified against a mock.
+
+**The same datasets drive two runs.** The `Api` client in `tests/fixtures/api.ts` takes a
+transport: `injectTransport` uses Fastify's `app.inject()` for the in-process suite, binding
+no socket, and `httpTransport` speaks real HTTP for `./run smoke` against a running engine.
+Neither the suite nor the smoke runner contains a case of its own — both read
+`tests/fixtures/datasets/`, so a case added or corrected there is picked up by both without
+editing either runner.
+
+### Extending the smoke run
+
+`scripts/smoke.ts` knows nothing about any endpoint. It iterates **suites**, each of which
+pairs a dataset with the way to execute one of its cases:
+
+```ts
+export interface Suite<TCase> {
+  name: string
+  cases: readonly TCase[]
+  describe: (testCase: TCase) => string
+  /** null when the case passes, or a sentence explaining the mismatch */
+  run: (context: SuiteContext, testCase: TCase) => Promise<string | null>
+}
+```
+
+Three sizes of change, three amounts of work:
+
+| Change                                       | What to touch                                                                         |
+| -------------------------------------------- | ------------------------------------------------------------------------------------- |
+| A new case                                   | One row in a dataset. Nothing else — the test suite and the smoke run both pick it up |
+| A new kind of check over an existing dataset | A new suite in `tests/fixtures/suites/`, plus one line in its `index.ts`              |
+| A whole new area — bookings in spec 2        | A dataset, a suite, one line in `index.ts`. The runner does not change                |
+
+`SuiteContext` gives a suite the typed `api` client, the raw `send` transport for requests
+the client deliberately cannot express, and `newResource`, which records what it creates so
+the run cleans up after itself against a development database.
+
+`./run smoke <filter>` runs only the suites whose name contains the filter — useful while
+fixing one area. An unmatched filter lists the available suites rather than passing silently.
+
+---
+
+## Deliberate limitations
+
+Recorded so they are not rediscovered as bugs.
+
+| Limitation                                  | Why                                                                                                                                                                              | Cost to lift                                                                             |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| No windows crossing midnight                | A window would belong to two dates at once, complicating slicing, weekday resolution and exception replacement                                                                   | Algorithm rewrite; at the database level only a CHECK is dropped, with no data migration |
+| `pool` mode rejected                        | Its data model is undefined — members table? parent resource? how does `capacity` relate?                                                                                        | Spec 3                                                                                   |
+| No schedule history                         | Audit trails belong above the engine                                                                                                                                             | New table, if ever needed                                                                |
+| Slot grid anchored per window, not globally | Two windows on a day each start their own grid, so 09:00–12:00 and 12:30–17:00 are offset by 30 minutes. The alternative silently drops the first half hour of the second window | Intentional; not planned to change                                                       |
+| No authentication                           | Deferred by the project owner. All routes register through one plugin, so a `preHandler` hook attaches in one place                                                              | One hook                                                                                 |

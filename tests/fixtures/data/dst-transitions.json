@@ -1,0 +1,70 @@
+{
+  "note": "Real IANA transitions for 2026, derived from the tz database via Luxon rather than written from memory. `hours` is the real length of the local calendar day on `date`.",
+  "transitions": [
+    {
+      "zone": "Europe/Warsaw",
+      "date": "2026-03-29",
+      "kind": "spring-forward",
+      "hours": 23,
+      "offsetBefore": "+01:00",
+      "offsetAfter": "+02:00"
+    },
+    {
+      "zone": "Europe/Warsaw",
+      "date": "2026-10-25",
+      "kind": "fall-back",
+      "hours": 25,
+      "offsetBefore": "+02:00",
+      "offsetAfter": "+01:00"
+    },
+    {
+      "zone": "America/New_York",
+      "date": "2026-03-08",
+      "kind": "spring-forward",
+      "hours": 23,
+      "offsetBefore": "-05:00",
+      "offsetAfter": "-04:00"
+    },
+    {
+      "zone": "America/New_York",
+      "date": "2026-11-01",
+      "kind": "fall-back",
+      "hours": 25,
+      "offsetBefore": "-04:00",
+      "offsetAfter": "-05:00"
+    },
+    {
+      "zone": "Pacific/Auckland",
+      "date": "2026-04-05",
+      "kind": "fall-back",
+      "hours": 25,
+      "offsetBefore": "+13:00",
+      "offsetAfter": "+12:00"
+    },
+    {
+      "zone": "Pacific/Auckland",
+      "date": "2026-09-27",
+      "kind": "spring-forward",
+      "hours": 23,
+      "offsetBefore": "+12:00",
+      "offsetAfter": "+13:00"
+    },
+    {
+      "zone": "Australia/Adelaide",
+      "date": "2026-04-05",
+      "kind": "fall-back",
+      "hours": 25,
+      "offsetBefore": "+10:30",
+      "offsetAfter": "+09:30"
+    },
+    {
+      "zone": "Australia/Adelaide",
+      "date": "2026-10-04",
+      "kind": "spring-forward",
+      "hours": 23,
+      "offsetBefore": "+09:30",
+      "offsetAfter": "+10:30"
+    }
+  ],
+  "zonesWithoutDst": ["Asia/Kolkata", "UTC"]
+}

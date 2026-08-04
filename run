@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+#
+# One entry point for every way of running this project.
+# `./run` with no arguments lists the scenarios.
+#
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+APP_PORT="${PORT:-3000}"
+DB_HOST_PORT=5433
+COMPOSE_DB_URL="postgres://postgres:postgres@localhost:${DB_HOST_PORT}/booking_engine"
+
+# ── output ───────────────────────────────────────────────────────────────────
+
+if [ -t 1 ]; then
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; OFF=$'\033[0m'
+else
+  BOLD=''; DIM=''; RED=''; GREEN=''; YELLOW=''; OFF=''
+fi
+
+step() { printf '%s→ %s%s\n' "$BOLD" "$1" "$OFF"; }
+ok()   { printf '%s✓ %s%s\n' "$GREEN" "$1" "$OFF"; }
+note() { printf '%s  %s%s\n' "$DIM" "$1" "$OFF"; }
+
+# Fail with an instruction, not just a symptom.
+die() {
+  printf '%s✗ %s%s\n' "$RED" "$1" "$OFF" >&2
+  [ $# -gt 1 ] && printf '%s  %s%s\n' "$YELLOW" "$2" "$OFF" >&2
+  exit 1
+}
+
+# ── preflight ────────────────────────────────────────────────────────────────
+
+need_docker() {
+  command -v docker >/dev/null 2>&1 ||
+    die "Docker is not installed." "Install Docker Desktop, then run this again."
+  docker info >/dev/null 2>&1 ||
+    die "Docker is installed but not running." "Start Docker Desktop and wait for it to report ready."
+}
+
+need_node() {
+  command -v node >/dev/null 2>&1 || die "Node is not installed." "Install Node 24 — see .nvmrc."
+  local major
+  major="$(node -p 'process.versions.node.split(".")[0]')"
+  if [ "$major" -lt 24 ]; then
+    printf '%s! Node %s is older than the required 24.%s\n' "$YELLOW" "$(node -v)" "$OFF" >&2
+    note "nvm use   (or install Node 24) — continuing anyway"
+  fi
+}
+
+need_deps() {
+  [ -d node_modules ] || { step "Installing dependencies"; npm install; }
+}
+
+need_env() {
+  if [ ! -f .env ]; then
+    step "Creating .env from .env.example"
+    cp .env.example .env
+    note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
+  fi
+}
+
+# A busy port is fatal rather than a warning: Docker would otherwise fail several seconds
+# later with "Bind for 0.0.0.0:3000 failed", which says nothing about who is holding it or
+# what to do. Name the holder and offer the way out.
+require_free_port() {
+  local port=$1
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || return 0
+
+  local holder
+  holder=$(docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null | grep ":${port}->" | cut -f1 | head -1)
+
+  # Our own stack holding the port is not a conflict — `up` on a running stack rebuilds it.
+  case "$holder" in
+    "$(basename "$PWD")-app-"*) return 0 ;;
+  esac
+
+  [ -z "$holder" ] && holder=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1" (pid "$2")"}')
+
+  die "Port ${port} is already in use by ${holder:-another process}." \
+    "Stop it, or run this on another port:  PORT=3100 $0 ${SCENARIO:-up}"
+}
+
+# Scenarios that talk to an already-running engine must find it, not assume the default.
+# A stack started as `PORT=3100 ./run up` is invisible to a later `./run docs` in a fresh
+# shell, which would then point at whatever else owns 3000 — on this machine, a different
+# project. Ask Docker where the container is actually published.
+resolve_running_port() {
+  [ -n "${PORT:-}" ] && return 0
+  command -v docker >/dev/null 2>&1 || return 0
+
+  local published
+  published=$(docker compose port app 3000 2>/dev/null | sed -E 's/.*:([0-9]+)$/\1/')
+  if [ -n "$published" ]; then
+    APP_PORT="$published"
+    return 0
+  fi
+
+  # Not in Docker: fall back to what .env says the local engine uses.
+  if [ -f .env ]; then
+    published=$(grep -E '^PORT=' .env 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')
+    [ -n "$published" ] && APP_PORT="$published"
+  fi
+}
+
+# Distinguishes "nothing is listening" from "something else is listening", which are very
+# different problems with very different fixes.
+assert_engine_answers() {
+  local base="http://localhost:${APP_PORT}"
+
+  if curl -fsS -m 3 "$base/health" 2>/dev/null | grep -q '"status"'; then
+    return 0
+  fi
+
+  if curl -s -m 3 -o /dev/null "$base/" 2>/dev/null && nc -z localhost "$APP_PORT" 2>/dev/null; then
+    local holder
+    holder=$(docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null | grep ":${APP_PORT}->" | cut -f1 | head -1)
+    die "Port ${APP_PORT} is answering, but it is not this engine${holder:+ — it is ${holder}}." \
+      "Start the engine with ./run up, or point at the right port:  PORT=<port> $0 ${SCENARIO:-docs}"
+  fi
+
+  die "Nothing is answering on ${base}." "Start it with ./run up or ./run dev, then try again."
+}
+
+# The reason this script exists: `docker compose up -d db` returns before Postgres
+# accepts connections, so migrating immediately afterwards fails intermittently.
+wait_for_db() {
+  step "Waiting for the database to accept connections"
+  local i
+  for i in $(seq 1 60); do
+    if docker compose exec -T db pg_isready -U postgres -d booking_engine >/dev/null 2>&1; then
+      ok "Database ready"
+      return 0
+    fi
+    sleep 1
+  done
+  die "The database did not become ready within 60 seconds." "Inspect it with: ./run logs db"
+}
+
+wait_for_app() {
+  step "Waiting for the engine to answer"
+  local i
+  for i in $(seq 1 60); do
+    if curl -fsS "http://localhost:${APP_PORT}/health" >/dev/null 2>&1; then
+      ok "Engine healthy on http://localhost:${APP_PORT}"
+      return 0
+    fi
+    sleep 1
+  done
+  die "The engine did not become healthy within 60 seconds." "Inspect it with: ./run logs app"
+}
+
+# ── scenarios ────────────────────────────────────────────────────────────────
+
+cmd_dev() {
+  need_docker; need_node; need_deps; need_env
+  require_free_port "$APP_PORT"
+  step "Starting the database"
+  docker compose up -d db
+  wait_for_db
+  step "Applying migrations"
+  DATABASE_URL="$COMPOSE_DB_URL" npm run --silent migrate
+  step "Starting the engine with reload"
+  note "Press Ctrl-C to stop. The database keeps running; stop it with ./run down"
+  # dev:server, not dev — `npm run dev` delegates back here and would recurse.
+  DATABASE_URL="$COMPOSE_DB_URL" npm run --silent dev:server
+}
+
+cmd_debug() {
+  need_docker; need_node; need_deps; need_env
+  step "Starting the database"
+  docker compose up -d db
+  wait_for_db
+  step "Applying migrations"
+  DATABASE_URL="$COMPOSE_DB_URL" npm run --silent migrate
+  step "Starting the engine with an inspector on 9229"
+  note "Attach from VS Code with 'Attach to running server', or open chrome://inspect"
+  DATABASE_URL="$COMPOSE_DB_URL" npm run --silent debug:server
+}
+
+cmd_up() {
+  need_docker
+  require_free_port "$APP_PORT"
+  step "Building and starting the full stack"
+  docker compose up -d --build
+  wait_for_app
+  note "Logs:  ./run logs"
+  note "Stop:  ./run down"
+}
+
+cmd_down() {
+  need_docker
+  step "Stopping the stack, keeping the data"
+  docker compose down
+  ok "Stopped. Data volume kept — use ./run reset to wipe it."
+}
+
+cmd_reset() {
+  need_docker
+  step "Wiping the database and rebuilding from scratch"
+  docker compose down -v
+  docker compose up -d --build
+  wait_for_app
+  ok "Fresh stack with an empty database"
+}
+
+cmd_test() {
+  need_docker; need_node; need_deps
+  note "The suite starts its own throwaway Postgres; the compose database is not used."
+  npm run --silent test
+}
+
+cmd_test_watch() {
+  need_docker; need_node; need_deps
+  npm run --silent test:watch
+}
+
+cmd_check() {
+  need_node; need_deps
+  step "Type checking"
+  npx tsc --noEmit
+  ok "No type errors"
+  step "Formatting check"
+  npx prettier --check . >/dev/null && ok "Formatting clean"
+  cmd_test
+}
+
+cmd_logs() {
+  need_docker
+  docker compose logs -f "${1:-app}"
+}
+
+cmd_psql() {
+  need_docker
+  docker compose exec db psql -U postgres -d booking_engine
+}
+
+# Interactive API reference, generated from the same schemas the routes validate against.
+cmd_docs() {
+  resolve_running_port
+  assert_engine_answers
+  local url="http://localhost:${APP_PORT}/docs"
+  ok "API reference: ${url}"
+  note "Every endpoint has a Try it out button — no curl needed."
+  if command -v open >/dev/null 2>&1; then open "$url"
+  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$url"
+  fi
+}
+
+# Replays the test-case datasets against a live engine. No case is written here — they all
+# come from tests/fixtures/datasets/, the same source the automated suite reads, so editing
+# a dataset changes this run too.
+cmd_smoke() {
+  need_node; need_deps
+  resolve_running_port
+  assert_engine_answers
+  # $1 is an optional suite filter, passed straight through.
+  BASE_URL="http://localhost:${APP_PORT}" npx tsx scripts/smoke.ts ${1:+"$1"}
+}
+
+cmd_help() {
+  cat <<EOF
+${BOLD}Usage:${OFF} ./run <scenario>
+
+${BOLD}Develop${OFF}
+  dev          Database in Docker, engine locally with reload
+  debug        Same as dev, plus a Node inspector on 9229
+  psql         Open a psql shell on the development database
+
+${BOLD}Run${OFF}
+  up           Build and start the whole stack in Docker, detached
+  down         Stop the stack, keeping the data
+  reset        Wipe the database and start fresh
+  logs [svc]   Follow logs, app by default
+  docs         Open the interactive API reference in a browser
+
+${BOLD}Verify${OFF}
+  test         Run the full suite once
+  test:watch   Re-run tests on change
+  check        Types, formatting and the full suite
+  smoke [name] Replay the test-case suites against a running engine, optionally filtered
+
+Every scenario checks its own prerequisites and explains what to do if one is missing.
+Details: README.md · Test cases: docs/test-cases.md
+EOF
+}
+
+# ── dispatch ─────────────────────────────────────────────────────────────────
+
+SCENARIO="${1:-help}"
+case "$SCENARIO" in
+  dev)         cmd_dev ;;
+  debug)       cmd_debug ;;
+  up)          cmd_up ;;
+  down)        cmd_down ;;
+  reset)       cmd_reset ;;
+  test)        cmd_test ;;
+  test:watch)  cmd_test_watch ;;
+  check)       cmd_check ;;
+  logs)        cmd_logs "${2:-app}" ;;
+  psql)        cmd_psql ;;
+  docs)        cmd_docs ;;
+  smoke)       cmd_smoke "${2:-}" ;;
+  help|-h|--help) cmd_help ;;
+  *)
+    printf '%sUnknown scenario: %s%s\n\n' "$RED" "$1" "$OFF" >&2
+    cmd_help >&2
+    exit 1
+    ;;
+esac
