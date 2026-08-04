@@ -1,0 +1,14 @@
+node_modules
+dist
+tests
+docs
+.git
+.github
+.vscode
+.env
+.DS_Store
+*.md
+docker-compose.yml
+Dockerfile
+.dockerignore
+vitest.config.ts

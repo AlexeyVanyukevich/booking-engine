@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: booking_engine
+    ports:
+      # 5433 on the host, so a locally installed Postgres on 5432 keeps working.
+      - '5433:5432'
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d booking_engine']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Runs once and exits. `app` waits for it to finish successfully, so the schema is
+  # always in place before the first request.
+  migrate:
+    build: .
+    command: ['node', 'dist/src/db/migrate.js']
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/booking_engine
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/booking_engine
+      PORT: '3000'
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MAX_RANGE_DAYS: ${MAX_RANGE_DAYS:-366}
+    ports:
+      - '${PORT:-3000}:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  db-data:
