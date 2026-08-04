@@ -1,4 +1,14 @@
 node_modules/
 dist/
+coverage/
+
+# Local environment. `.env.example` is the template and is committed.
 .env
+.env.*
+!.env.example
+
+# README suggests `./run dev > dev.log 2>&1 &`, so logs land in the working tree.
+*.log
+
 .DS_Store
+.idea/
