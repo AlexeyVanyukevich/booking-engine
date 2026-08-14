@@ -357,7 +357,170 @@ Transition dates come from the tz database, not from memory — see
 
 ---
 
-## 7. Error contract
+## 7. Bookings
+
+Base setup for most cases: an hourly `exclusive` Warsaw resource, open Monday 09:00–12:00
+(`2026-07-20` is that Monday). Cases that need `shared` or a day-based resource say so.
+
+### 7.1 Creation — accepted
+
+| ID        | Case                            | Steps                                      | Expected                                            | Covered by         |
+| --------- | ------------------------------- | ------------------------------------------ | --------------------------------------------------- | ------------------ |
+| TC-BK-C01 | Confirmed on a slot boundary    | `POST .../bookings` 09:00–10:00, no `hold` | `201`, `status: "confirmed"`, `held_until: null`    | `bookings.test.ts` |
+| TC-BK-C02 | Contiguous run of slots         | `POST .../bookings` 09:00–12:00            | `201`                                               | same               |
+| TC-BK-C03 | Hold with an expiry             | `hold: true, hold_minutes: 15`             | `201`, `status: "held"`, `held_until` in the future | same               |
+| TC-BK-C04 | Touching bookings both accepted | Book 09:00–10:00, then 10:00–11:00         | Both `201` — touching is not overlapping            | same               |
+| TC-BK-C05 | Z-suffixed timestamp accepted   | `start_time`/`end_time` end in `Z`         | `201`, rendered back in the resource's own offset   | same               |
+
+### 7.2 Creation — rejected
+
+Grid rejections are a dataset (`tests/fixtures/datasets/booking-validation.ts` ←
+`rejectedBookings`), also replayed by `./run smoke`.
+
+| ID        | Case                              | Body difference                 | `error`                 | Covered by                              |
+| --------- | --------------------------------- | ------------------------------- | ----------------------- | --------------------------------------- |
+| TC-BK-R01 | Start half an hour off the grid   | `09:30–10:30`                   | `invalid_slot_boundary` | `bookings.test.ts` ← `rejectedBookings` |
+| TC-BK-R02 | End landing inside a slot         | `09:00–09:30`                   | `invalid_slot_boundary` | same                                    |
+| TC-BK-R03 | Run extending past the window     | `11:00–13:00`                   | `outside_schedule`      | same                                    |
+| TC-BK-R04 | Start before the window opens     | `08:00–09:00`                   | `invalid_slot_boundary` | same                                    |
+| TC-BK-R05 | Inverted interval                 | `10:00–09:00`                   | `invalid_interval`      | same                                    |
+| TC-BK-R06 | Zero-length interval              | `09:00–09:00`                   | `invalid_interval`      | same                                    |
+| TC-BK-R07 | A date the resource does not work | Tuesday, `09:00–10:00`          | `invalid_slot_boundary` | same                                    |
+| TC-BK-R08 | `hold_minutes` without `hold`     | `hold_minutes: 15`, no `hold`   | `400 validation_error`  | `bookings.test.ts`                      |
+| TC-BK-R09 | Hold past the configured maximum  | `hold: true, hold_minutes: 600` | `400`                   | same                                    |
+| TC-BK-R10 | Unknown field in the body         | extra field                     | `400 validation_error`  | same                                    |
+| TC-BK-R11 | Unknown resource                  | random uuid                     | `404 not_found`         | same                                    |
+| TC-BK-R12 | `start_time` with no offset       | naive timestamp                 | `400`                   | same                                    |
+| TC-BK-R13 | `end_time` with no offset         | naive timestamp                 | `400`                   | same                                    |
+| TC-BK-R14 | Inactive resource                 | `is_active: false`              | `409 resource_inactive` | same                                    |
+
+### 7.3 Overlap and capacity
+
+| ID        | Case                                                | Steps                                                                             | Expected                                                    | Covered by         |
+| --------- | --------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------ |
+| TC-BK-O01 | Exclusive: overlap refused                          | Book 09:00–10:00, book it again                                                   | Second is `409 slot_unavailable`                            | `bookings.test.ts` |
+| TC-BK-O02 | An expired hold frees the slot immediately          | Expire a hold via SQL, no sweeper running, book the same slot                     | `201` — no wait for a background worker                     | same               |
+| TC-BK-O03 | A live hold still blocks                            | Hold not yet expired, book the same slot                                          | `409`                                                       | same               |
+| TC-BK-O04 | Shared: accepts up to capacity                      | Capacity N, N bookings on one slot                                                | All `201`                                                   | same               |
+| TC-BK-O05 | Shared: refuses past capacity                       | The (N+1)th booking on that slot                                                  | `409 slot_unavailable`                                      | same               |
+| TC-BK-O06 | Occupancy is counted per slot, not per booking      | Two bookings touching opposite ends of a multi-slot run, then a run spanning both | The run is accepted — the middle slot is not double-counted | same               |
+| TC-BK-O07 | Any full slot in the run refuses the whole request  | One slot in a multi-slot run is already at capacity                               | `409`                                                       | same               |
+| TC-BK-O08 | Cancelled bookings do not count against capacity    | Cancel a booking, rebook the same slot                                            | `201`                                                       | same               |
+| TC-BK-O09 | Two genuinely concurrent requests for the last unit | Both promises started before either is awaited, on a capacity-1 shared resource   | Exactly one `201` and one `409`                             | same               |
+
+### 7.4 Read
+
+| ID        | Case                          | Steps                            | Expected                                 | Covered by         |
+| --------- | ----------------------------- | -------------------------------- | ---------------------------------------- | ------------------ |
+| TC-BK-G01 | Round-trip                    | `POST`, then `GET /bookings/:id` | `200`, body matches                      | `bookings.test.ts` |
+| TC-BK-G02 | Unknown booking               | `GET` a random uuid              | `404 not_found`                          | same               |
+| TC-BK-G03 | `idempotency_key` never leaks | Create with a key, `GET`         | The key is absent from the response body | same               |
+
+### 7.5 Idempotency
+
+| ID        | Case                                                | Steps                                                       | Expected                        | Covered by         |
+| --------- | --------------------------------------------------- | ----------------------------------------------------------- | ------------------------------- | ------------------ |
+| TC-BK-I01 | Creates once, replays with `200`                    | The same key twice                                          | `201` then `200`, same `id`     | `bookings.test.ts` |
+| TC-BK-I02 | Same key, different booking                         | Same key, different `end_time`                              | `409 idempotency_key_reused`    | same               |
+| TC-BK-I03 | Same key, different customer                        | Same key, different `customer_id`                           | `409`                           | same               |
+| TC-BK-I04 | `hold`/`hold_minutes` ignored when comparing        | Replay with different `hold_minutes`                        | `200`, same `id`                | same               |
+| TC-BK-I05 | Keys are separated per resource                     | Same key on two different resources                         | Both `201`                      | same               |
+| TC-BK-I06 | Keyless bookings never collide                      | Two keyless bookings on a shared resource                   | Both `201`                      | same               |
+| TC-BK-I07 | Replay wins on a full shared resource               | Capacity 1, replay of the booking that filled it            | `200`, not a capacity `409`     | same               |
+| TC-BK-I08 | A different key on that full resource still refused | New key on the same full resource                           | `409 slot_unavailable`          | same               |
+| TC-BK-I09 | Two identical requests race to one booking          | Concurrent identical create requests, both awaited together | One `200`, one `201`, same `id` | same               |
+
+### 7.6 Lifecycle
+
+The transition matrix — every (starting status, action) pair — is a dataset
+(`tests/fixtures/datasets/booking-transitions.ts` ← `bookingTransitions`, 28 cases: 7 states ×
+4 actions). `./run smoke` replays 20 of the 28: `held_expired` and `expired` cannot be
+fabricated over HTTP within the smoke run's timeout, so those 8 rows are exercised by the
+integration suite only.
+
+| ID        | Case                                             | Steps                                                    | Expected                                                       | Covered by                                |
+| --------- | ------------------------------------------------ | -------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------- |
+| TC-BK-L01 | Full transition matrix                           | Each (from, action) pair                                 | Status or error code per the matrix, including no-op successes | `bookings.test.ts` ← `bookingTransitions` |
+| TC-BK-L02 | `held_until` cleared on confirm                  | Confirm a held booking                                   | `held_until` becomes `null`                                    | `bookings.test.ts`                        |
+| TC-BK-L03 | `held_until` cleared on cancel                   | Cancel a held booking                                    | `held_until` becomes `null`                                    | same                                      |
+| TC-BK-L04 | Cancelling frees the slot                        | Cancel, then rebook the same slot                        | `201`                                                          | same                                      |
+| TC-BK-L05 | A refused transition reports the current status  | e.g. confirm a cancelled booking                         | `409`, `details.status` is the current status                  | same                                      |
+| TC-BK-L06 | Unknown booking                                  | Any action on a random uuid                              | `404`                                                          | same                                      |
+| TC-BK-L07 | Two conflicting actions on one booking, one wins | `cancel` and `complete` raced on one `confirmed` booking | Exactly one succeeds, the other is refused — never both        | same                                      |
+
+### 7.7 Reschedule
+
+| ID         | Case                                         | Steps                                                | Expected                                 | Covered by         |
+| ---------- | -------------------------------------------- | ---------------------------------------------------- | ---------------------------------------- | ------------------ |
+| TC-BK-RS01 | Moves a confirmed booking                    | Reschedule to a new run of slots                     | `200`, same `id` and `status`, new times | `bookings.test.ts` |
+| TC-BK-RS02 | Keeps a hold a hold                          | Reschedule a held booking                            | `status` stays `held`                    | same               |
+| TC-BK-RS03 | Does not block itself (exclusive)            | Reschedule onto its own current interval             | `200`, not `409`                         | same               |
+| TC-BK-RS04 | Does not block itself (shared)               | Same, on a shared resource                           | `200`                                    | same               |
+| TC-BK-RS05 | Refuses a move onto a taken slot             | Target slot already booked by another booking        | `409 slot_unavailable`                   | same               |
+| TC-BK-RS06 | A refused move leaves the original untouched | As above, then `GET`                                 | Original times unchanged                 | same               |
+| TC-BK-RS07 | Refuses a target off the grid                | New interval not on the grid                         | `400 invalid_slot_boundary`              | same               |
+| TC-BK-RS08 | Refused from a terminal state                | Reschedule a cancelled, completed or no-show booking | `409 invalid_state_transition`           | same               |
+| TC-BK-RS09 | Unknown booking                              | Reschedule a random uuid                             | `404`                                    | same               |
+
+### 7.8 Listings
+
+| ID         | Case                                                            | Steps                                                     | Expected                                  | Covered by         |
+| ---------- | --------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------- | ------------------ |
+| TC-BK-LS01 | Lists a resource's bookings, ascending                          | Three bookings, `GET .../bookings`                        | Ordered by `start_time`                   | `bookings.test.ts` |
+| TC-BK-LS02 | Excludes bookings outside the window                            | A booking outside `from`/`to`                             | Not present                               | same               |
+| TC-BK-LS03 | Includes a booking starting before the window, reaching into it | Overlap at the start, on a day-based resource             | Included                                  | same               |
+| TC-BK-LS04 | Includes a booking starting inside, reaching past the window    | Overlap at the end, on a day-based resource               | Included                                  | same               |
+| TC-BK-LS05 | Filters by status                                               | `?status=cancelled` vs `?status=confirmed`                | Only the matching statuses returned       | same               |
+| TC-BK-LS06 | Customer listing spans resources                                | Bookings on two resources, same customer                  | Both returned                             | same               |
+| TC-BK-LS07 | `customer_id` required on the customer listing                  | `GET /bookings` without it                                | `400`                                     | same               |
+| TC-BK-LS08 | Both bounds required, and range validated                       | Missing `from`/`to`; inverted; over-wide                  | `400`, `invalid_range` for the last two   | same               |
+| TC-BK-LS09 | Unknown resource                                                | `GET .../bookings` on a random uuid                       | `404`                                     | same               |
+| TC-BK-LS10 | Each timestamp rendered in its own resource timezone            | Customer listing across a Warsaw and an Auckland resource | Offsets differ per booking's own resource | same               |
+
+### 7.9 Availability reflects bookings
+
+| ID         | Case                                             | Steps                                                   | Expected                                        | Covered by             |
+| ---------- | ------------------------------------------------ | ------------------------------------------------------- | ----------------------------------------------- | ---------------------- |
+| TC-BK-AV01 | A booked slot becomes unavailable                | Book one slot, query availability                       | That slot `available: false`, the others `true` | `availability.test.ts` |
+| TC-BK-AV02 | A multi-slot booking marks every slot it covers  | Book a run, query                                       | Every covered slot `false`                      | same                   |
+| TC-BK-AV03 | Shared stays available until capacity is reached | Book up to capacity − 1, query, then book the last unit | Available until the last booking, then `false`  | same                   |
+| TC-BK-AV04 | Cancelled bookings are ignored                   | Cancel a booking, query again                           | The slot is available again                     | same                   |
+
+### 7.10 Hold expiry
+
+| ID        | Case                                                            | Steps                                                         | Expected                                                         | Covered by             |
+| --------- | --------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------- |
+| TC-BK-H01 | The in-transaction sweep frees a slot within the same request   | Expire a hold via SQL, no sweeper running, book the same slot | `201` — see TC-BK-O02                                            | `bookings.test.ts`     |
+| TC-BK-H02 | The sweeper expires exactly the stale holds                     | One expired hold, one live hold                               | The expired one becomes `expired`; the live one stays `held`     | `hold-sweeper.test.ts` |
+| TC-BK-H03 | `held_until` survives the sweep                                 | Sweep an expired hold, then read it back                      | Still not `null` — it is the only record of when the hold lapsed | same                   |
+| TC-BK-H04 | The sweep is idempotent                                         | Run it twice                                                  | The second run expires nothing                                   | same                   |
+| TC-BK-H05 | A concurrent sweeper takes no lock and does no work             | One sweep holds the advisory lock while another runs          | The second does nothing rather than duplicating the work         | same                   |
+| TC-BK-H06 | Sweeps across resources in one pass                             | Two resources, one stale hold each                            | Both expired by one call                                         | same                   |
+| TC-BK-H07 | `HOLD_SWEEP_ENABLED` parses like the other configuration values | Unset, `"true"`, `"false"`, and an invalid value              | Defaults `true`; `"true"`/`"false"` parse; anything else throws  | `config.test.ts`       |
+
+### 7.11 Delete guard
+
+| ID        | Case                                          | Steps                                     | Expected                                                      | Covered by          |
+| --------- | --------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------- | ------------------- |
+| TC-BK-D01 | Refuses to delete a resource with any booking | Create a booking, `DELETE` the resource   | `409 resource_has_bookings`; the resource is still `GET`-able | `resources.test.ts` |
+| TC-BK-D02 | Refuses even when every booking is terminal   | Cancel the booking, `DELETE` the resource | `409` — history is not discarded as a side effect of a delete | same                |
+
+### 7.12 Background sweep topologies
+
+Not automated. `src/worker.ts` has no test file: the three topologies of the running engine
+were exercised by hand against the built image during implementation, not by a suite that runs
+on every commit.
+
+| ID        | Case                                     | Steps                                                             | Expected                                                                                                      | Covered by                 |
+| --------- | ---------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| TC-BK-W01 | `server.js` sweeps on its own timer      | Boot the built image, wait past `HOLD_SWEEP_INTERVAL_SECONDS`     | A stale hold expires with no separate worker running                                                          | **gap** — verified by hand |
+| TC-BK-W02 | `worker.js` loops and sweeps             | Boot `worker.js` standalone                                       | Same effect; the process keeps running                                                                        | **gap** — verified by hand |
+| TC-BK-W03 | `worker.js --once` sweeps once and exits | Boot `worker.js --once`                                           | One sweep, then exit code `0`                                                                                 | **gap** — verified by hand |
+| TC-BK-W04 | Two sweepers never duplicate work        | `server.js` and `worker.js` running together against one database | The advisory lock lets exactly one of them sweep per tick — see TC-BK-H05 for the mechanism at the unit level | **gap** — verified by hand |
+
+---
+
+## 8. Error contract
 
 | ID        | Case                                 | Steps                                                      | Expected                                                                                  | Covered by              |
 | --------- | ------------------------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------- |
@@ -371,7 +534,7 @@ Transition dates come from the tz database, not from memory — see
 
 ---
 
-## 8. Persistence
+## 9. Persistence
 
 Verified against the database directly rather than through HTTP.
 
@@ -397,7 +560,7 @@ Verified against the database directly rather than through HTTP.
 
 ---
 
-## 9. End-to-end journeys
+## 10. End-to-end journeys
 
 Full chains, run in order, as an acceptance pass before a release.
 
@@ -439,7 +602,7 @@ Full chains, run in order, as an acceptance pass before a release.
 
 ---
 
-## 10. Known gaps
+## 11. Known gaps
 
 Not covered by any automated test. Run these by hand, or automate them when the cost of a
 regression justifies it.
