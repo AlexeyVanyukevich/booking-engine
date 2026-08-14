@@ -12,7 +12,12 @@
  */
 import { Api } from '../tests/fixtures/api.js'
 import type { ResourcePayload } from '../tests/fixtures/resources.js'
-import { suites, type SuiteContext } from '../tests/fixtures/suites/index.js'
+import {
+  isSkipped,
+  suites,
+  type CaseResult,
+  type SuiteContext,
+} from '../tests/fixtures/suites/index.js'
 import { httpTransport } from '../tests/fixtures/transport.js'
 
 const BASE_URL = process.env.BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`
@@ -36,6 +41,8 @@ interface Failure {
 
 const failures: Failure[] = []
 let passed = 0
+/** Cases a suite reported it could not execute. Never counted as passes. */
+let skipped = 0
 
 /** Resources created along the way, removed at the end so a development database stays usable. */
 const created: string[] = []
@@ -86,14 +93,17 @@ async function main(): Promise<void> {
 
     for (const testCase of suite.cases) {
       const name = suite.describe(testCase)
-      let detail: string | null
+      let detail: CaseResult
       try {
         detail = await suite.run(context, testCase)
       } catch (error) {
         detail = error instanceof Error ? error.message : String(error)
       }
 
-      if (detail === null) {
+      if (isSkipped(detail)) {
+        skipped += 1
+        out(`  ${YELLOW}–${OFF} ${DIM}${name} — ${detail.skipped}${OFF}`)
+      } else if (detail === null) {
         passed += 1
         out(`  ${GREEN}✓${OFF} ${DIM}${name}${OFF}`)
       } else {
@@ -117,13 +127,16 @@ async function cleanup(): Promise<void> {
 
 function report(): void {
   const total = passed + failures.length
+  // Skips are reported beside the count, never inside it: a check that did not run is not a
+  // check that passed.
+  const note = skipped > 0 ? `${DIM} (${skipped} skipped)${OFF}` : ''
 
   if (failures.length === 0) {
-    out(`\n${GREEN}${BOLD}✓ ${passed}/${total} checks passed${OFF}`)
+    out(`\n${GREEN}${BOLD}✓ ${passed}/${total} checks passed${OFF}${note}`)
     process.exit(0)
   }
 
-  out(`\n${RED}${BOLD}✗ ${failures.length} of ${total} checks failed${OFF}`)
+  out(`\n${RED}${BOLD}✗ ${failures.length} of ${total} checks failed${OFF}${note}`)
   for (const failure of failures) {
     out(`  ${RED}${failure.suite} — ${failure.case}${OFF}\n    ${failure.detail}`)
   }

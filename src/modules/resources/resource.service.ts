@@ -1,8 +1,10 @@
 import { IANAZone } from 'luxon'
 import {
   NotFoundError,
+  ResourceHasBookingsError,
   UnsupportedConcurrencyModeError,
   ValidationError,
+  rethrowContention,
 } from '../../shared/errors.js'
 import {
   InvalidDurationError,
@@ -71,6 +73,17 @@ function assertCapacityMatchesMode(mode: string, capacity: number): void {
       field: 'capacity',
     })
   }
+}
+
+/**
+ * The foreign key is the guard, and the service only translates its complaint. Counting
+ * bookings first and then deleting would leave a window in which a booking arrives between
+ * the two statements; letting the constraint decide has no such window.
+ */
+function isBookingReference(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const candidate = error as { code?: unknown; constraint?: unknown }
+  return candidate.code === '23503' && candidate.constraint === 'bookings_resource_id_fkey'
 }
 
 export function toResponse(row: ResourceRow): ResourceResponse {
@@ -143,7 +156,22 @@ export class ResourceService {
   }
 
   async delete(id: string): Promise<void> {
-    const deleted = await this.repository.delete(id)
+    let deleted: boolean
+    try {
+      deleted = await this.repository.delete(id)
+    } catch (error) {
+      if (isBookingReference(error)) {
+        throw new ResourceHasBookingsError(
+          `Resource ${id} has bookings on record and cannot be deleted; set is_active to false to retire it instead`,
+          { resource_id: id },
+        )
+      }
+      // This statement locks the resource row and then key-share-locks its bookings for the
+      // RESTRICT check — the opposite order to a booking insert, so it is one side of a
+      // possible deadlock and must not surface as a 500.
+      rethrowContention(error, 'The delete')
+    }
+
     if (!deleted) throw new NotFoundError(`Resource ${id} not found`)
   }
 

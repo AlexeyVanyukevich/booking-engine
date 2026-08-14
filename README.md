@@ -4,8 +4,9 @@ A domain-agnostic booking engine. It operates on three abstractions — resource
 booking — and knows nothing about what is being booked. Domain-specific data lives in a
 separate layer above, in its own tables referencing `resource_id`.
 
-This stage implements resources, weekly schedules, per-date exceptions and availability.
-Bookings arrive in spec 2; the `pool` concurrency mode in spec 3.
+This stage implements resources, weekly schedules, per-date exceptions, availability and
+bookings — creation, the lifecycle, hold expiry, reschedule, listings, and capacity for both
+`exclusive` and `shared`. The `pool` concurrency mode arrives in spec 3.
 
 | Document                                           | What it holds                                                               |
 | -------------------------------------------------- | --------------------------------------------------------------------------- |
@@ -56,6 +57,9 @@ One command per scenario. `./run` on its own lists them.
 | `./run test`           | Run the full suite once                              |
 | `./run check`          | Types, formatting and the full suite                 |
 | `./run smoke [filter]` | Replay the test-case suites against a running engine |
+
+`./run up` also starts a `worker` service alongside `db`, `migrate` and `app` — the same image,
+sweeping expired holds on its own. See [Background sweep](#background-sweep) below.
 
 **Which one to use while writing code: `./run dev`.** It reloads on every save, so nothing
 needs rebuilding. `./run up` runs the compiled image in Docker, where a source change means
@@ -126,6 +130,33 @@ To see what the engine is actually doing, raise the log level rather than adding
 LOG_LEVEL=debug ./run dev
 ```
 
+## Background sweep
+
+A `held` booking that outlives its `held_until` still blocks its slot until something moves it
+out of `held`. That correctness step runs inline, inside every write transaction that touches
+the resource — so a caller is never refused a slot that is in fact free — but it only touches
+the one resource being written to. Something has to sweep the rest, so that listings stop
+showing a `held` row on a dead hold and idle resources do not accumulate them forever. The same
+image runs that sweep three ways, chosen with the command:
+
+| Command                          | Behaviour                             | Suits                                                    |
+| -------------------------------- | ------------------------------------- | -------------------------------------------------------- |
+| `node dist/src/server.js`        | API, with the sweep on a timer inside | Development, a single-instance deployment                |
+| `node dist/src/worker.js`        | Sweep only, looping                   | A separate service or deployment                         |
+| `node dist/src/worker.js --once` | One sweep, then exit                  | A Kubernetes CronJob, a systemd timer, a cloud scheduler |
+
+`./run up` and `docker compose up` start the looping worker alongside the API by default. All
+three can run at once, safely: a Postgres advisory lock lets exactly one sweeper win each tick,
+so any combination of API timers, a worker service and an external scheduler never sweeps
+twice or races.
+
+**`HOLD_SWEEP_ENABLED` defaults to `true`**, meaning the API process sweeps on its own timer
+even when a separate `worker` service is also deployed. That is deliberate: a dead worker would
+otherwise be an invisible failure — requests keep being served, nothing alerts, and stale holds
+quietly accumulate. Leaving the API timers on means a failed worker is covered automatically,
+and the separate service is an optimisation rather than a dependency. Set it to `false` only
+when request-serving processes should do no background work at all.
+
 ## Scripts
 
 Beyond the scenarios above, these do one thing each and are what `./run` calls internally:
@@ -138,6 +169,7 @@ Beyond the scenarios above, these do one thing each and are what `./run` calls i
 | `npm run migrate:built` | Apply migrations from `dist/`, used inside the container  |
 | `npm run dev:server`    | Start the engine alone, assuming a database is already up |
 | `npm run debug:server`  | The same with an inspector                                |
+| `npm run worker`        | Run the hold-sweep worker alone, looping                  |
 | `npm run format`        | Format with Prettier                                      |
 
 The test suite starts its own throwaway Postgres container and ignores the compose service,
@@ -172,6 +204,15 @@ The endpoints at a glance:
 | PUT    | `/resources/:id/exceptions/:date`       | Create or overwrite an exception                                    |
 | DELETE | `/resources/:id/exceptions/:date`       | Remove an exception                                                 |
 | GET    | `/resources/:id/availability?from=&to=` | Compute available slots                                             |
+| POST   | `/resources/:id/bookings`               | Book a run of slots                                                 |
+| GET    | `/bookings/:id`                         | Read a booking                                                      |
+| POST   | `/bookings/:id/confirm`                 | Confirm a held booking                                              |
+| POST   | `/bookings/:id/cancel`                  | Cancel a booking                                                    |
+| POST   | `/bookings/:id/reschedule`              | Move a booking to a different run of slots                          |
+| POST   | `/bookings/:id/complete`                | Mark a booking as completed                                         |
+| POST   | `/bookings/:id/no-show`                 | Mark a booking as a no-show                                         |
+| GET    | `/resources/:id/bookings?from=&to=`     | List the bookings of one resource                                   |
+| GET    | `/bookings?customer_id=&from=&to=`      | List one customer's bookings across resources                       |
 
 ### Conventions
 
@@ -217,5 +258,7 @@ the first of them is 23 real hours long.
 ## Known limitations
 
 No windows crossing midnight, `pool` mode rejected until spec 3, no schedule history, no
-authentication. Each is deliberate, and the reasoning and cost to lift are tabulated in
+authentication, bookings in the past are accepted, a schedule edit may orphan existing
+bookings, `shared` serializes writes per resource, no pagination on listings, no automatic
+completion. Each is deliberate, and the reasoning and cost to lift are tabulated in
 [docs/conventions.md](docs/conventions.md#deliberate-limitations).

@@ -15,6 +15,10 @@ describe('loadConfig', () => {
       port: 4000,
       logLevel: 'debug',
       maxRangeDays: 90,
+      defaultHoldMinutes: 10,
+      maxHoldMinutes: 60,
+      holdSweepIntervalSeconds: 60,
+      holdSweepEnabled: true,
     })
   })
 
@@ -25,6 +29,10 @@ describe('loadConfig', () => {
       port: 3000,
       logLevel: 'info',
       maxRangeDays: 366,
+      defaultHoldMinutes: 10,
+      maxHoldMinutes: 60,
+      holdSweepIntervalSeconds: 60,
+      holdSweepEnabled: true,
     })
   })
 
@@ -39,4 +47,37 @@ describe('loadConfig', () => {
   it('throws when MAX_RANGE_DAYS is zero or negative', () => {
     expect(() => loadConfig({ ...valid, MAX_RANGE_DAYS: '0' })).toThrow(/MAX_RANGE_DAYS/)
   })
+})
+
+const base = { DATABASE_URL: 'postgres://localhost/test' }
+
+it('defaults the hold and sweep settings', () => {
+  const config = loadConfig({ ...base })
+  expect(config.defaultHoldMinutes).toBe(10)
+  expect(config.maxHoldMinutes).toBe(60)
+  expect(config.holdSweepIntervalSeconds).toBe(60)
+  expect(config.holdSweepEnabled).toBe(true)
+})
+
+it('reads the hold settings from the environment', () => {
+  const config = loadConfig({
+    ...base,
+    DEFAULT_HOLD_MINUTES: '5',
+    MAX_HOLD_MINUTES: '120',
+    HOLD_SWEEP_INTERVAL_SECONDS: '30',
+    HOLD_SWEEP_ENABLED: 'false',
+  })
+  expect(config.defaultHoldMinutes).toBe(5)
+  expect(config.maxHoldMinutes).toBe(120)
+  expect(config.holdSweepIntervalSeconds).toBe(30)
+  expect(config.holdSweepEnabled).toBe(false)
+})
+
+it.each(['yes', '1', 'TRUE', ''])('rejects %s as a boolean flag', (raw) => {
+  // An empty string is the exception: it means "unset" and falls back, like the others.
+  if (raw === '') {
+    expect(loadConfig({ ...base, HOLD_SWEEP_ENABLED: raw }).holdSweepEnabled).toBe(true)
+    return
+  }
+  expect(() => loadConfig({ ...base, HOLD_SWEEP_ENABLED: raw })).toThrow(/HOLD_SWEEP_ENABLED/)
 })

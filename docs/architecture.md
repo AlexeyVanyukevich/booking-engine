@@ -11,7 +11,7 @@ This document describes the whole system. It is delivered in three slices, each 
 | Slice | Content                                                              | State                               |
 | ----- | -------------------------------------------------------------------- | ----------------------------------- |
 | 1     | Resources, schedule, exceptions, availability                        | **Implemented**                     |
-| 2     | Bookings: `exclusive` and `shared`, lifecycle, hold expiry, listings | Designed here, not built            |
+| 2     | Bookings: `exclusive` and `shared`, lifecycle, hold expiry, listings | **Implemented**                     |
 | 3     | `pool` concurrency mode                                              | Sketched here, needs its own design |
 
 Where this document and a spec disagree about something already built, **the spec wins** — it was written against the implementation. This document stays the system-level map.
@@ -48,7 +48,7 @@ The slot grid for a date starts at the schedule window's `start_time`, or at `sl
 
 - **exclusive** (`capacity = 1`) — one slot, one booking. Doctor, tennis court.
 - **shared** (`capacity = N`) — one slot, up to N bookings. Group class, restaurant table.
-- **pool** — a group of interchangeable resources. Hotel rooms of the same type. **Not implemented:** the engine currently refuses `pool` with `400 unsupported_concurrency_mode`, because this document does not yet define how a pool is represented in data — a members table? a parent resource? how does `capacity` relate to the number of members? That is spec 3.
+- **pool** — a group of interchangeable resources. Hotel rooms of the same type. **Not implemented:** the engine currently refuses `pool` with `400 unsupported_concurrency_mode`. The data model is settled: a pool is a resource whose members are ordinary resources carrying a `pool_id` foreign key back to it, each with its own schedule, exceptions and `is_active`; the pool's capacity is derived from the count of its active members rather than stored; and `bookings.resource_id` always points at a member, never at the pool itself. Wiring up member selection and enforcing the invariant is spec 3.
 
 **Domain layer** stores characteristics in its own tables:
 
@@ -110,16 +110,16 @@ Applied to this model: `timezone` and `concurrency_mode` are immutable after cre
 
 A booking record. No domain fields (notes, guest count, etc.) — those belong to the domain layer.
 
-| Column      | Type                       | Description                                                  |
-| ----------- | -------------------------- | ------------------------------------------------------------ |
-| id          | UUID, PK                   |                                                              |
-| resource_id | UUID, FK → Resource        |                                                              |
-| start_time  | timestamptz, NOT NULL      |                                                              |
-| end_time    | timestamptz, NOT NULL      |                                                              |
-| status      | text, NOT NULL             | `held` · `confirmed` · `cancelled` · `completed` · `no_show` |
-| customer_id | text, NOT NULL             | Opaque external identifier                                   |
-| held_until  | timestamptz                | NULL = immediately confirmed                                 |
-| created_at  | timestamptz, default now() |                                                              |
+| Column      | Type                       | Description                                                              |
+| ----------- | -------------------------- | ------------------------------------------------------------------------ |
+| id          | UUID, PK                   |                                                                          |
+| resource_id | UUID, FK → Resource        |                                                                          |
+| start_time  | timestamptz, NOT NULL      |                                                                          |
+| end_time    | timestamptz, NOT NULL      |                                                                          |
+| status      | text, NOT NULL             | `held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired` |
+| customer_id | text, NOT NULL             | Opaque external identifier                                               |
+| held_until  | timestamptz                | Set on `held` and `expired`; NULL otherwise                              |
+| created_at  | timestamptz, default now() |                                                                          |
 
 **Overlap prevention (exclusive, capacity = 1):**
 
@@ -146,16 +146,20 @@ For `capacity > 1`: use `SELECT COUNT(*) ... FOR UPDATE` inside a transaction.
 ```
 held ──→ confirmed ──→ completed
   │           │
-  │           └──→ cancelled
-  └──→ expired (held_until < now(), handled by background worker)
+  │           ├──→ cancelled
+  │           └──→ no_show
+  ├──→ cancelled
+  └──→ expired (held_until elapsed, swept in-transaction or by the background worker)
 ```
 
-Two flows, chosen per booking:
+Two flows, chosen per booking, but both are a single `INSERT`:
 
-- **Instant:** `book()` → status is `confirmed` immediately.
-- **Two-step:** `hold()` → `confirm(holdId)` within the hold window.
+- **Instant:** `hold` omitted or false → the row is inserted `confirmed`, `held_until = NULL`.
+- **Two-step:** `hold: true` → the row is inserted `held`, `held_until` set from
+  `hold_minutes`; a later `confirm` moves it to `confirmed`.
 
-Internally, `book()` is `hold()` + `confirm()` in a single transaction with `held_until = NULL`.
+The status is resolved before the transaction opens; there is no separate `hold()` call
+composed with `confirm()` underneath `POST /resources/:id/bookings`.
 
 ---
 
@@ -291,6 +295,10 @@ POST   /resources/:id/bookings
   → 201 { id, resource_id, start_time, end_time, status, held_until }
   → 409 { error: "slot_unavailable" }
 
+GET    /bookings/:id
+  → 200 { id, resource_id, start_time, end_time, status, customer_id, held_until }
+  → 404 { error: "not_found" }
+
 POST   /bookings/:id/confirm
   → 200 { id, status: "confirmed" }
   → 410 { error: "hold_expired" }
@@ -301,6 +309,8 @@ POST   /bookings/:id/cancel
 POST   /bookings/:id/reschedule
   body: { start_time, end_time }
   → 200 { id, start_time, end_time, status }
+  → 400 { error: "invalid_slot_boundary" }
+  → 404 { error: "not_found" }
   → 409 { error: "slot_unavailable" }
 
 POST   /bookings/:id/complete
@@ -310,7 +320,7 @@ POST   /bookings/:id/no-show
   → 200 { id, status: "no_show" }
 ```
 
-`reschedule` internally performs cancel + book in a single transaction. If the new slot is unavailable, the original booking remains unchanged.
+`reschedule` updates the times of the same row, keeping its id and status. An exclusion constraint never compares a row with itself, so a single `UPDATE` is safe; if the new slots are unavailable the booking is left unchanged.
 
 ### Listing Bookings
 

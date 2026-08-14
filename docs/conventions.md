@@ -116,16 +116,36 @@ Every error response has the same shape:
 { "error": "schedule_overlap", "message": "…", "details": {} }
 ```
 
-| Code                           | Status | Meaning                                              |
-| ------------------------------ | ------ | ---------------------------------------------------- |
-| `validation_error`             | 400    | Body, query or path failed validation                |
-| `invalid_range`                | 400    | `to <= from`, or wider than `MAX_RANGE_DAYS`         |
-| `schedule_overlap`             | 400    | Two rules on one weekday overlap                     |
-| `schedule_shape_mismatch`      | 400    | Rule shape does not match the slot duration          |
-| `unsupported_concurrency_mode` | 400    | `pool`, until spec 3                                 |
-| `not_found`                    | 404    | No such resource, or no such route                   |
-| `unsupported_media_type`       | 415    | Body sent with a content type the route cannot parse |
-| `internal_error`               | 500    | Anything unexpected                                  |
+| Code                           | Status | Meaning                                                       |
+| ------------------------------ | ------ | ------------------------------------------------------------- |
+| `validation_error`             | 400    | Body, query or path failed validation                         |
+| `invalid_range`                | 400    | `to <= from`, or wider than `MAX_RANGE_DAYS`                  |
+| `schedule_overlap`             | 400    | Two rules on one weekday overlap                              |
+| `schedule_shape_mismatch`      | 400    | Rule shape does not match the slot duration                   |
+| `unsupported_concurrency_mode` | 400    | `pool`, until spec 3                                          |
+| `invalid_interval`             | 400    | `end_time <= start_time`                                      |
+| `invalid_slot_boundary`        | 400    | Start or end does not fall on a slot boundary                 |
+| `outside_schedule`             | 400    | A slot in the requested run is not offered                    |
+| `not_found`                    | 404    | No such resource or booking, or no such route                 |
+| `slot_unavailable`             | 409    | The slots exist and are offered, but capacity is taken        |
+| `resource_inactive`            | 409    | The resource exists but `is_active` is false                  |
+| `invalid_state_transition`     | 409    | The requested transition is not legal from the current status |
+| `resource_has_bookings`        | 409    | `DELETE /resources/:id` with bookings on record               |
+| `idempotency_key_reused`       | 409    | Same key, different request body                              |
+| `hold_expired`                 | 410    | `confirm` on a hold whose `held_until` has passed             |
+| `unsupported_media_type`       | 415    | Body sent with a content type the route cannot parse          |
+| `internal_error`               | 500    | Anything unexpected                                           |
+| `concurrent_update`            | 503    | Contention rolled the transaction back; retry the request     |
+
+`slot_unavailable` and `outside_schedule` mean different things and must not be conflated: the
+first says the slots are offered but taken, the second that they were never offered.
+
+`concurrent_update` is not a third kind of conflict. Postgres reports a deadlock as SQLSTATE
+`40P01` and a serialization failure as `40001`; both mean the transaction was rolled back
+through no fault of the request, so the answer is `503` with a `Retry-After` header rather than
+a `409`, which would claim the slots are contested when the engine never reached a decision.
+The engine translates and does not retry: retry machinery was deliberately rejected, so the
+decision to send the request again stays with the caller.
 
 Framework-level 4xx are translated into this shape too — a caller's mistake must never
 surface as `internal_error`. Unexpected exceptions are logged with a stack trace and returned
@@ -153,6 +173,27 @@ assert the output directly and again on the generated document.
 Every route therefore carries `tags`, `summary` and a `response` map in its schema; a test
 asserts this for all of them, and fails if a route is added without them or documented
 without existing.
+
+---
+
+## Configuration
+
+Environment variables, read and validated once in `src/config.ts`. A malformed value fails
+fast at startup rather than surfacing later as an unexplained 500.
+
+| Variable                      | Default    | Meaning                                                                                                                              |
+| ----------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`                | _required_ | Postgres connection string                                                                                                           |
+| `PORT`                        | `3000`     | HTTP port                                                                                                                            |
+| `LOG_LEVEL`                   | `info`     | Fastify/Pino log level                                                                                                               |
+| `MAX_RANGE_DAYS`              | `366`      | Widest `from`/`to` window accepted anywhere in the engine                                                                            |
+| `DEFAULT_HOLD_MINUTES`        | `10`       | Applied when `hold: true` carries no minutes                                                                                         |
+| `MAX_HOLD_MINUTES`            | `60`       | Upper bound accepted from a caller for `hold_minutes`                                                                                |
+| `HOLD_SWEEP_INTERVAL_SECONDS` | `60`       | How often the hold sweep runs, in either entrypoint                                                                                  |
+| `HOLD_SWEEP_ENABLED`          | `true`     | Whether the API process sweeps on a timer; `worker.js` sweeps regardless — see [the sweep topologies](../README.md#background-sweep) |
+
+`HOLD_SWEEP_ENABLED` defaulting to true is load-bearing, not cosmetic: a dead worker service
+would otherwise be an invisible failure. See the README for why.
 
 ---
 
@@ -193,6 +234,36 @@ Cross-cutting helpers live in `src/shared/`, database wiring in `src/db/`.
 import anything from `src/db/`. It takes windows, a timezone, a duration and an anchor, and
 returns slots. All DST-sensitive arithmetic — the part where bugs actually live — stays a pure
 function testable without Postgres. A `grep` for `db/` in that file must come back empty.
+
+**Where a resource has a parent, the parent is locked before the member.** Spec 2 has nothing
+to apply this to; it is written down now so spec 3's pools do not discover it as an
+intermittent deadlock.
+
+---
+
+## Concurrency
+
+_Established by spec 2._
+
+**Lock when the invariant spans more than one row, or when a read-then-write has to be
+atomic.** A single-row invariant — `exclusive`'s disjointness — is carried by a database
+exclusion constraint alone, atomic at READ COMMITTED, and needs no application lock. A count
+over a set of rows — `shared`'s capacity — cannot be expressed as a constraint, so the resource
+row is locked first with `SELECT id FROM resources WHERE id = $1 FOR UPDATE`, serializing
+writes for that resource only.
+
+The same lock is also taken whenever a request carries an idempotency key, in any mode. Without
+it, two concurrent replays of one key each race a speculative insertion that can deadlock
+against `bookings_no_overlap` (Postgres SQLSTATE `40P01`) — precisely the failure an
+idempotency key exists to prevent. Locking the resource first makes the lookup-then-insert pair
+atomic instead: the second request finds the first one's committed row rather than racing it.
+
+A same-row read-decide-write sequence needs the same discipline at a different granularity: the
+lifecycle transitions (`confirm`, `cancel`, `complete`, `no-show`) read a booking's status,
+decide against a transition table, then write the new one, so the **booking** row — not the
+resource row — is locked with `FOR UPDATE`. Otherwise two conflicting actions on one booking can
+both read the same starting status and the loser's write silently overwrites the winner's
+terminal state.
 
 ---
 
@@ -239,11 +310,11 @@ export interface Suite<TCase> {
 
 Three sizes of change, three amounts of work:
 
-| Change                                       | What to touch                                                                         |
-| -------------------------------------------- | ------------------------------------------------------------------------------------- |
-| A new case                                   | One row in a dataset. Nothing else — the test suite and the smoke run both pick it up |
-| A new kind of check over an existing dataset | A new suite in `tests/fixtures/suites/`, plus one line in its `index.ts`              |
-| A whole new area — bookings in spec 2        | A dataset, a suite, one line in `index.ts`. The runner does not change                |
+| Change                                       | What to touch                                                                                                     |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| A new case                                   | One row in a dataset. Nothing else — the test suite and the smoke run both pick it up                             |
+| A new kind of check over an existing dataset | A new suite in `tests/fixtures/suites/`, plus one line in its `index.ts`                                          |
+| A whole new area                             | A dataset, a suite, one line in `index.ts`. The runner does not change — bookings in spec 2 is the worked example |
 
 `SuiteContext` gives a suite the typed `api` client, the raw `send` transport for requests
 the client deliberately cannot express, and `newResource`, which records what it creates so
@@ -258,10 +329,15 @@ fixing one area. An unmatched filter lists the available suites rather than pass
 
 Recorded so they are not rediscovered as bugs.
 
-| Limitation                                  | Why                                                                                                                                                                              | Cost to lift                                                                             |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| No windows crossing midnight                | A window would belong to two dates at once, complicating slicing, weekday resolution and exception replacement                                                                   | Algorithm rewrite; at the database level only a CHECK is dropped, with no data migration |
-| `pool` mode rejected                        | Its data model is undefined — members table? parent resource? how does `capacity` relate?                                                                                        | Spec 3                                                                                   |
-| No schedule history                         | Audit trails belong above the engine                                                                                                                                             | New table, if ever needed                                                                |
-| Slot grid anchored per window, not globally | Two windows on a day each start their own grid, so 09:00–12:00 and 12:30–17:00 are offset by 30 minutes. The alternative silently drops the first half hour of the second window | Intentional; not planned to change                                                       |
-| No authentication                           | Deferred by the project owner. All routes register through one plugin, so a `preHandler` hook attaches in one place                                                              | One hook                                                                                 |
+| Limitation                                          | Why                                                                                                                                                                                                                                                                                                                          | Cost to lift                                                                             |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| No windows crossing midnight                        | A window would belong to two dates at once, complicating slicing, weekday resolution and exception replacement                                                                                                                                                                                                               | Algorithm rewrite; at the database level only a CHECK is dropped, with no data migration |
+| `pool` mode rejected                                | Its data model is settled (members carry a `pool_id`, capacity is derived) but member selection and enforcement are not built                                                                                                                                                                                                | Spec 3                                                                                   |
+| No schedule history                                 | Audit trails belong above the engine                                                                                                                                                                                                                                                                                         | New table, if ever needed                                                                |
+| Slot grid anchored per window, not globally         | Two windows on a day each start their own grid, so 09:00–12:00 and 12:30–17:00 are offset by 30 minutes. The alternative silently drops the first half hour of the second window                                                                                                                                             | Intentional; not planned to change                                                       |
+| No authentication                                   | Deferred by the project owner. All routes register through one plugin, so a `preHandler` hook attaches in one place                                                                                                                                                                                                          | One hook                                                                                 |
+| Bookings in the past are accepted                   | The engine reads no clock; availability offers past slots, and "anything offered is bookable" follows. Back-dated entry is legitimate                                                                                                                                                                                        | A validation rule, if a domain ever wants it                                             |
+| A schedule edit may leave bookings off the new grid | Refusing it would freeze a schedule around a single distant booking, and the remedy is a business decision. Such a booking is not loose: occupancy is counted as overlap per slot, so it still occupies every slot of the new grid it touches. The resource can therefore look fuller than the domain intends, never emptier | A conflict query on `PUT`, and a policy to apply                                         |
+| `shared` serializes writes per resource             | One row lock is the whole mechanism; bookings for one resource on unrelated dates still queue behind each other                                                                                                                                                                                                              | SERIALIZABLE plus a retry loop; schema unchanged                                         |
+| No pagination on listings                           | Both listings are bounded by a required window of at most `MAX_RANGE_DAYS`, as everywhere else in the engine                                                                                                                                                                                                                 | Keyset pagination on `(start_time, id)`                                                  |
+| No automatic completion                             | An automatic transition at `end_time` would make `no_show` unreachable                                                                                                                                                                                                                                                       | Not planned; the distinction is the caller's                                             |

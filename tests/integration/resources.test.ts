@@ -9,7 +9,7 @@ import {
   rejectedPatches,
   rejectedResources,
 } from '../fixtures/datasets/resource-validation.js'
-import { aWindow } from '../fixtures/schedules.js'
+import { WEEKDAYS, aWindow } from '../fixtures/schedules.js'
 import { buildTestApp, closeTestDb, resetDb } from './helpers.js'
 
 let api: Api
@@ -166,5 +166,42 @@ describe('DELETE /resources/:id', () => {
     const id = await api.givenResource(aResource())
     expect((await api.deleteResource(id)).statusCode).toBe(204)
     expect((await api.deleteResource(id)).statusCode).toBe(404)
+  })
+})
+
+describe('DELETE /resources/:id with bookings', () => {
+  it('refuses to delete a resource that has any booking', async () => {
+    const id = await api.givenResource(aResource())
+    await api.givenSchedule(id, [aWindow(WEEKDAYS.monday, '09:00', '12:00')])
+    await api.givenBooking(id, {
+      customer_id: 'c-1',
+      start_time: '2026-07-20T09:00:00+02:00',
+      end_time: '2026-07-20T10:00:00+02:00',
+    })
+
+    const response = await api.deleteResource(id)
+    expect(response.statusCode).toBe(409)
+    expect(response.json().error).toBe('resource_has_bookings')
+    expect((await api.getResource(id)).statusCode).toBe(200)
+  })
+
+  it('refuses even when every booking is terminal', async () => {
+    const id = await api.givenResource(aResource())
+    await api.givenSchedule(id, [aWindow(WEEKDAYS.monday, '09:00', '12:00')])
+    const booking = await api.givenBooking(id, {
+      customer_id: 'c-1',
+      start_time: '2026-07-20T09:00:00+02:00',
+      end_time: '2026-07-20T10:00:00+02:00',
+    })
+    await api.bookingAction(booking, 'cancel')
+
+    // History is not discarded as a side effect of a delete; `is_active: false` is the
+    // tool for retiring a resource.
+    expect((await api.deleteResource(id)).statusCode).toBe(409)
+  })
+
+  it('still deletes a resource that has none', async () => {
+    const id = await api.givenResource(aResource())
+    expect((await api.deleteResource(id)).statusCode).toBe(204)
   })
 })

@@ -3,6 +3,27 @@ import type { ResourcePayload } from '../resources.js'
 import type { Transport } from '../transport.js'
 
 /**
+ * A case the smoke run could not execute — not a pass and not a failure. Some states the
+ * engine can reach are out of reach over HTTP alone, and counting those as passes would
+ * inflate the reported check count with checks that never ran.
+ */
+export interface Skipped {
+  /** Why the case could not be executed, shown next to it in the output. */
+  skipped: string
+}
+
+/** `null` passed, a `Skipped` never ran, and a string explains the mismatch. */
+export type CaseResult = string | null | Skipped
+
+export function skip(reason: string): Skipped {
+  return { skipped: reason }
+}
+
+export function isSkipped(result: CaseResult): result is Skipped {
+  return typeof result === 'object' && result !== null
+}
+
+/**
  * A suite pairs a dataset with the way to execute one of its cases. The smoke runner knows
  * nothing else: it iterates suites, so covering a new area means adding a suite file and one
  * line in `index.ts`, never touching the runner.
@@ -13,8 +34,7 @@ export interface Suite<TCase> {
   cases: readonly TCase[]
   /** One line describing the case, shown per check. */
   describe: (testCase: TCase) => string
-  /** Returns `null` when the case passes, or a sentence explaining the mismatch. */
-  run: (context: SuiteContext, testCase: TCase) => Promise<string | null>
+  run: (context: SuiteContext, testCase: TCase) => Promise<CaseResult>
 }
 
 export interface SuiteContext {

@@ -1,5 +1,5 @@
 import type { Kysely } from 'kysely'
-import type { Database } from '../../db/schema.js'
+import type { ConcurrencyMode, Database } from '../../db/schema.js'
 
 export interface ResourceRow {
   id: string
@@ -7,11 +7,15 @@ export interface ResourceRow {
   slot_duration: string
   slot_anchor_time: string
   capacity: number
-  concurrency_mode: string
+  concurrency_mode: ConcurrencyMode
   is_active: boolean
 }
 
-const columns = [
+/**
+ * Exported so a write transaction elsewhere can re-read the same shape under `FOR UPDATE`
+ * rather than keeping a second list that can drift from this one.
+ */
+export const resourceColumns = [
   'id',
   'timezone',
   'slot_duration',
@@ -26,7 +30,7 @@ export interface InsertResource {
   slot_duration: string
   slot_anchor_time: string
   capacity: number
-  concurrency_mode: string
+  concurrency_mode: ConcurrencyMode
 }
 
 export interface UpdateResource {
@@ -43,12 +47,16 @@ export class ResourceRepository {
     return this.db
       .insertInto('resources')
       .values(values)
-      .returning(columns)
+      .returning(resourceColumns)
       .executeTakeFirstOrThrow()
   }
 
   async findById(id: string): Promise<ResourceRow | undefined> {
-    return this.db.selectFrom('resources').select(columns).where('id', '=', id).executeTakeFirst()
+    return this.db
+      .selectFrom('resources')
+      .select(resourceColumns)
+      .where('id', '=', id)
+      .executeTakeFirst()
   }
 
   async update(id: string, values: UpdateResource): Promise<ResourceRow | undefined> {
@@ -56,7 +64,7 @@ export class ResourceRepository {
       .updateTable('resources')
       .set({ ...values, updated_at: new Date() })
       .where('id', '=', id)
-      .returning(columns)
+      .returning(resourceColumns)
       .executeTakeFirst()
   }
 

@@ -237,3 +237,216 @@ describe('defaults', () => {
     expect(new Set(ids).size).toBe(3)
   })
 })
+
+describe('002_bookings', () => {
+  it('creates the exclusion constraint that prevents overlapping bookings', async () => {
+    const { rows } = await sql<{ conname: string }>`
+      select conname from pg_constraint where conname = 'bookings_no_overlap'
+    `.execute(getTestDb())
+    expect(rows).toHaveLength(1)
+  })
+
+  it('refuses two active bookings that overlap on one resource', async () => {
+    const db = getTestDb()
+    const resource = await db
+      .insertInto('resources')
+      .values({
+        timezone: 'Europe/Warsaw',
+        slot_duration: 'PT1H',
+        concurrency_mode: 'exclusive',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+
+    const booking = (start: string, end: string) => ({
+      resource_id: resource.id,
+      start_time: start,
+      end_time: end,
+      status: 'confirmed' as const,
+      customer_id: 'c-1',
+      held_until: null,
+      concurrency_mode: 'exclusive' as const,
+    })
+
+    await db
+      .insertInto('bookings')
+      .values(booking('2026-07-20T09:00:00Z', '2026-07-20T10:00:00Z'))
+      .execute()
+
+    await expect(
+      db
+        .insertInto('bookings')
+        .values(booking('2026-07-20T09:30:00Z', '2026-07-20T10:30:00Z'))
+        .execute(),
+    ).rejects.toThrow(/bookings_no_overlap/)
+  })
+
+  it('accepts two bookings that merely touch', async () => {
+    const db = getTestDb()
+    const resource = await db
+      .insertInto('resources')
+      .values({
+        timezone: 'Europe/Warsaw',
+        slot_duration: 'PT1H',
+        concurrency_mode: 'exclusive',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+
+    await db
+      .insertInto('bookings')
+      .values([
+        {
+          resource_id: resource.id,
+          start_time: '2026-07-20T09:00:00Z',
+          end_time: '2026-07-20T10:00:00Z',
+          status: 'confirmed',
+          customer_id: 'c-1',
+          held_until: null,
+          concurrency_mode: 'exclusive',
+        },
+        {
+          resource_id: resource.id,
+          start_time: '2026-07-20T10:00:00Z',
+          end_time: '2026-07-20T11:00:00Z',
+          status: 'confirmed',
+          customer_id: 'c-2',
+          held_until: null,
+          concurrency_mode: 'exclusive',
+        },
+      ])
+      .execute()
+
+    const { rows } = await sql<{ count: string }>`select count(*) from bookings`.execute(db)
+    expect(rows[0]!.count).toBe('2')
+  })
+
+  it('lets two overlapping shared bookings coexist', async () => {
+    const db = getTestDb()
+    const resource = await db
+      .insertInto('resources')
+      .values({
+        timezone: 'Europe/Warsaw',
+        slot_duration: 'PT1H',
+        concurrency_mode: 'shared',
+        capacity: 2,
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+
+    // The exclusion constraint must not govern these rows: their invariant is a count,
+    // enforced in the service under the row lock.
+    await db
+      .insertInto('bookings')
+      .values([
+        {
+          resource_id: resource.id,
+          start_time: '2026-07-20T09:00:00Z',
+          end_time: '2026-07-20T10:00:00Z',
+          status: 'confirmed',
+          customer_id: 'c-1',
+          held_until: null,
+          concurrency_mode: 'shared',
+        },
+        {
+          resource_id: resource.id,
+          start_time: '2026-07-20T09:00:00Z',
+          end_time: '2026-07-20T10:00:00Z',
+          status: 'confirmed',
+          customer_id: 'c-2',
+          held_until: null,
+          concurrency_mode: 'shared',
+        },
+      ])
+      .execute()
+
+    const { rows } = await sql<{ count: string }>`select count(*) from bookings`.execute(db)
+    expect(rows[0]!.count).toBe('2')
+  })
+
+  it('still refuses two overlapping exclusive bookings', async () => {
+    const db = getTestDb()
+    const resource = await db
+      .insertInto('resources')
+      .values({
+        timezone: 'Europe/Warsaw',
+        slot_duration: 'PT1H',
+        concurrency_mode: 'exclusive',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+
+    const booking = (customer: string) => ({
+      resource_id: resource.id,
+      start_time: '2026-07-20T09:00:00Z',
+      end_time: '2026-07-20T10:00:00Z',
+      status: 'confirmed' as const,
+      customer_id: customer,
+      held_until: null,
+      concurrency_mode: 'exclusive' as const,
+    })
+
+    await db.insertInto('bookings').values(booking('c-1')).execute()
+    await expect(db.insertInto('bookings').values(booking('c-2')).execute()).rejects.toThrow(
+      /bookings_no_overlap/,
+    )
+  })
+
+  it('requires held_until exactly on held and expired rows', async () => {
+    const db = getTestDb()
+    const resource = await db
+      .insertInto('resources')
+      .values({
+        timezone: 'UTC',
+        slot_duration: 'PT1H',
+        concurrency_mode: 'exclusive',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+
+    await expect(
+      db
+        .insertInto('bookings')
+        .values({
+          resource_id: resource.id,
+          start_time: '2026-07-20T09:00:00Z',
+          end_time: '2026-07-20T10:00:00Z',
+          status: 'confirmed',
+          customer_id: 'c-1',
+          held_until: '2026-07-20T08:00:00Z',
+          concurrency_mode: 'exclusive',
+        })
+        .execute(),
+    ).rejects.toThrow(/bookings_held_until_matches_status/)
+  })
+
+  it('refuses to delete a resource that has bookings', async () => {
+    const db = getTestDb()
+    const resource = await db
+      .insertInto('resources')
+      .values({
+        timezone: 'UTC',
+        slot_duration: 'PT1H',
+        concurrency_mode: 'exclusive',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+
+    await db
+      .insertInto('bookings')
+      .values({
+        resource_id: resource.id,
+        start_time: '2026-07-20T09:00:00Z',
+        end_time: '2026-07-20T10:00:00Z',
+        status: 'cancelled',
+        customer_id: 'c-1',
+        held_until: null,
+        concurrency_mode: 'exclusive',
+      })
+      .execute()
+
+    await expect(
+      db.deleteFrom('resources').where('id', '=', resource.id).execute(),
+    ).rejects.toThrow()
+  })
+})
