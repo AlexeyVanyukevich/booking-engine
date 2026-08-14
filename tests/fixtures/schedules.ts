@@ -17,8 +17,8 @@ export interface ScheduleRule {
   end_time: string | null
 }
 
-/** One intraday window on one weekday. */
-export function aWindow(dayOfWeek: number, start: string, end: string): ScheduleRule {
+/** One intraday window on one weekday. `null, null` produces a whole-day rule. */
+export function aWindow(dayOfWeek: number, start: string | null, end: string | null): ScheduleRule {
   return { day_of_week: dayOfWeek, start_time: start, end_time: end }
 }
 

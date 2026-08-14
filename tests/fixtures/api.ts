@@ -82,6 +82,30 @@ export class Api {
     return this.send({ method: 'GET', url: '/health' })
   }
 
+  createBooking(resourceId: string, payload: Record<string, unknown>) {
+    return this.send({ method: 'POST', url: `/resources/${resourceId}/bookings`, payload })
+  }
+
+  getBooking(id: string) {
+    return this.send({ method: 'GET', url: `/bookings/${id}` })
+  }
+
+  bookingAction(id: string, action: 'confirm' | 'cancel' | 'complete' | 'no-show') {
+    return this.send({ method: 'POST', url: `/bookings/${id}/${action}` })
+  }
+
+  rescheduleBooking(id: string, payload: Record<string, unknown>) {
+    return this.send({ method: 'POST', url: `/bookings/${id}/reschedule`, payload })
+  }
+
+  listResourceBookings(resourceId: string, query: string) {
+    return this.send({ method: 'GET', url: `/resources/${resourceId}/bookings${query}` })
+  }
+
+  listCustomerBookings(query: string) {
+    return this.send({ method: 'GET', url: `/bookings${query}` })
+  }
+
   /** Creates a resource and returns its id, failing loudly if creation was rejected. */
   async givenResource(payload: ResourcePayload): Promise<string> {
     const response = await this.createResource(payload)
@@ -112,5 +136,16 @@ export class Api {
         )
       }
     }
+  }
+
+  /** Creates a booking and returns its id, failing loudly if it was rejected. */
+  async givenBooking(resourceId: string, payload: Record<string, unknown>): Promise<string> {
+    const response = await this.createBooking(resourceId, payload)
+    if (response.statusCode !== 201) {
+      throw new Error(
+        `Fixture setup failed: expected 201, got ${response.statusCode} ${response.body}`,
+      )
+    }
+    return response.json().id as string
   }
 }
