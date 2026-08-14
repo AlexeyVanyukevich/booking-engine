@@ -71,10 +71,17 @@ export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
       schema: {
         tags: ['Resources'],
         summary: 'Delete a resource',
-        description:
-          'A hard delete that cascades to the schedule and the exceptions. `is_active: false` already covers soft-disable, so this means what it says.',
+        description: md(
+          'A hard delete that cascades to the schedule and the exceptions.',
+          'It is refused with `409 resource_has_bookings` when the resource has bookings in **any** status, terminal ones included: a delete must not discard booking history as a side effect. `is_active: false` is how a resource is retired.',
+        ),
         params: ResourceParams,
-        response: { 204: Type.Null(), 404: ErrorResponse },
+        response: {
+          204: Type.Null(),
+          404: ErrorResponse,
+          409: ErrorResponse,
+          503: ErrorResponse,
+        },
       },
     },
     async (request, reply) => {
