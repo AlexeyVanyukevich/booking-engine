@@ -18,14 +18,23 @@ export async function closeTestDb(): Promise<void> {
 }
 
 export async function resetDb(): Promise<void> {
-  await sql`truncate table schedule_exceptions, schedule, resources restart identity cascade`.execute(
+  await sql`truncate table bookings, schedule_exceptions, schedule, resources restart identity cascade`.execute(
     getTestDb(),
   )
 }
 
 export async function buildTestApp(): Promise<FastifyInstance> {
   const app = buildApp({
-    config: { databaseUrl: inject('databaseUrl'), port: 0, logLevel: 'silent', maxRangeDays: 366 },
+    config: {
+      databaseUrl: inject('databaseUrl'),
+      port: 0,
+      logLevel: 'silent',
+      maxRangeDays: 366,
+      defaultHoldMinutes: 10,
+      maxHoldMinutes: 60,
+      holdSweepIntervalSeconds: 60,
+      holdSweepEnabled: false,
+    },
     db: getTestDb(),
   })
   await app.ready()

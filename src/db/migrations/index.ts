@@ -1,4 +1,5 @@
 import type { Migration } from 'kysely/migration'
+import * as bookings from './002_bookings.js'
 import * as initial from './001_initial.js'
 
 /**
@@ -13,4 +14,5 @@ import * as initial from './001_initial.js'
  */
 export const migrations: Record<string, Migration> = {
   '001_initial': initial,
+  '002_bookings': bookings,
 }
