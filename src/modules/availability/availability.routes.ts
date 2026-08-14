@@ -1,5 +1,6 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
 import { md } from '../../shared/docs.js'
+import { BookingRepository } from '../bookings/booking.repository.js'
 import { ExceptionRepository } from '../exceptions/exception.repository.js'
 import { ResourceRepository } from '../resources/resource.repository.js'
 import { ErrorResponse, ResourceParams } from '../resources/resource.schemas.js'
@@ -14,6 +15,7 @@ export const availabilityRoutes: FastifyPluginAsyncTypebox = async (app) => {
     new ScheduleRepository(app.db),
     new ExceptionRepository(app.db),
     app.config.maxRangeDays,
+    new BookingRepository(app.db),
   )
 
   app.get(
@@ -31,7 +33,7 @@ export const availabilityRoutes: FastifyPluginAsyncTypebox = async (app) => {
           ],
           "All arithmetic runs in the resource's local time. A `P1D` slot therefore spans 23, 24 or 25 real hours across a daylight-saving transition while still running anchor to anchor — try `from=2026-03-28&to=2026-03-31` on a Warsaw resource.",
           'An inactive resource returns an empty list rather than 404: it exists, but is not bookable.',
-          '`available` is `true` on every slot until bookings arrive in spec 2. The field ships now so the contract does not change then.',
+          '`available` is false once a slot is at capacity. Held bookings count until their hold expires — a read never waits for the background sweep.',
         ),
         params: ResourceParams,
         querystring: AvailabilityQuery,

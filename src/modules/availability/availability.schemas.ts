@@ -22,7 +22,7 @@ export const AvailabilitySlot = Type.Object({
   end: Type.String({ examples: ['2026-07-21T14:00:00+02:00'] }),
   available: Type.Boolean({
     description:
-      'Always `true` until bookings land in spec 2. The field ships now so the contract does not change then.',
+      'False when the slot is at capacity. A held booking counts until its hold expires; cancelled, completed and expired ones do not.',
   }),
 })
 export type AvailabilitySlot = Static<typeof AvailabilitySlot>

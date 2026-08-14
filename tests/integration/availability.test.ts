@@ -1,14 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { sql } from 'kysely'
 import { Api } from '../fixtures/api.js'
 import { injectTransport } from '../fixtures/transport.js'
 import { unknownUuid } from '../fixtures/ids.js'
-import { aResource } from '../fixtures/resources.js'
+import { aResource, aSharedResource } from '../fixtures/resources.js'
 import { WEEKDAYS, aWindow, everyDay, windowsOn } from '../fixtures/schedules.js'
 import {
   availabilityScenarios,
   type AvailabilityScenario,
 } from '../fixtures/datasets/availability-scenarios.js'
-import { buildTestApp, closeTestDb, resetDb } from './helpers.js'
+import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
 
 let api: Api
 let close: () => Promise<void>
@@ -54,8 +55,7 @@ describe('GET /resources/:id/availability', () => {
   it.each(availabilityScenarios)('marks every slot available in $name', async (scenario) => {
     const response = await runScenario(scenario)
     for (const slot of response.json().slots as Slot[]) {
-      // Always true until bookings land in spec 2; the field ships now so the contract
-      // does not change when they do.
+      // These scenarios create no bookings, so nothing has been subtracted.
       expect(slot.available).toBe(true)
     }
   })
@@ -142,5 +142,108 @@ describe('GET /resources/:id/availability', () => {
     const response = await api.getAvailability(unknownUuid(), '2026-07-20', '2026-07-21')
     expect(response.statusCode).toBe(404)
     expect(response.json().error).toBe('not_found')
+  })
+})
+
+describe('availability reflects bookings', () => {
+  const at = (hour: string) => `2026-07-20T${hour}:00+02:00`
+
+  async function anHourlyResource(overrides = {}): Promise<string> {
+    const id = await api.givenResource(aResource(overrides))
+    await api.givenSchedule(id, [aWindow(WEEKDAYS.monday, '09:00', '12:00')])
+    return id
+  }
+
+  it('marks a booked slot unavailable and leaves the others alone', async () => {
+    const id = await anHourlyResource()
+    await api.createBooking(id, {
+      customer_id: 'c-1',
+      start_time: at('10:00'),
+      end_time: at('11:00'),
+    })
+
+    const slots = (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots
+    expect(slots.map((slot: Slot) => slot.available)).toEqual([true, false, true])
+  })
+
+  it('marks every slot of a multi-slot booking unavailable', async () => {
+    const id = await anHourlyResource()
+    await api.createBooking(id, {
+      customer_id: 'c-1',
+      start_time: at('09:00'),
+      end_time: at('11:00'),
+    })
+
+    const slots = (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots
+    expect(slots.map((slot: Slot) => slot.available)).toEqual([false, false, true])
+  })
+
+  it('keeps a shared slot available until capacity is reached', async () => {
+    const id = await api.givenResource(aSharedResource({ capacity: 2 }))
+    await api.givenSchedule(id, [aWindow(WEEKDAYS.monday, '09:00', '12:00')])
+
+    await api.createBooking(id, {
+      customer_id: 'c-1',
+      start_time: at('09:00'),
+      end_time: at('10:00'),
+    })
+    expect(
+      (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots[0].available,
+    ).toBe(true)
+
+    await api.createBooking(id, {
+      customer_id: 'c-2',
+      start_time: at('09:00'),
+      end_time: at('10:00'),
+    })
+    expect(
+      (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots[0].available,
+    ).toBe(false)
+  })
+
+  it('counts a live hold against availability', async () => {
+    const id = await anHourlyResource()
+    await api.createBooking(id, {
+      customer_id: 'c-1',
+      start_time: at('09:00'),
+      end_time: at('10:00'),
+      hold: true,
+    })
+
+    const slots = (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots
+    expect(slots[0].available).toBe(false)
+  })
+
+  it('ignores an expired hold without waiting for a sweep', async () => {
+    const id = await anHourlyResource()
+    const booking = await api.givenBooking(id, {
+      customer_id: 'c-1',
+      start_time: at('09:00'),
+      end_time: at('10:00'),
+      hold: true,
+    })
+    // Backdated relative to the database's own clock — see expireHold in bookings.test.ts.
+    await getTestDb()
+      .updateTable('bookings')
+      .set({ held_until: sql<Date>`now() - interval '1 minute'` })
+      .where('id', '=', booking)
+      .execute()
+
+    // The row is still `held` in the table; the read filters it by predicate.
+    const slots = (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots
+    expect(slots[0].available).toBe(true)
+  })
+
+  it('ignores cancelled bookings', async () => {
+    const id = await anHourlyResource()
+    const booking = await api.givenBooking(id, {
+      customer_id: 'c-1',
+      start_time: at('09:00'),
+      end_time: at('10:00'),
+    })
+    await api.bookingAction(booking, 'cancel')
+
+    const slots = (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots
+    expect(slots[0].available).toBe(true)
   })
 })
