@@ -10,6 +10,7 @@
     "dev": "./run dev",
     "build": "tsc",
     "start": "node dist/src/server.js",
+    "worker": "node dist/src/worker.js",
     "migrate": "tsx src/db/migrate.ts",
     "format": "prettier --write .",
     "dev:debug": "./run debug",

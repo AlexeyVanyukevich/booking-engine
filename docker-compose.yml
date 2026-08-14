@@ -35,6 +35,10 @@ services:
       PORT: '3000'
       LOG_LEVEL: ${LOG_LEVEL:-info}
       MAX_RANGE_DAYS: ${MAX_RANGE_DAYS:-366}
+      DEFAULT_HOLD_MINUTES: ${DEFAULT_HOLD_MINUTES:-10}
+      MAX_HOLD_MINUTES: ${MAX_HOLD_MINUTES:-60}
+      HOLD_SWEEP_INTERVAL_SECONDS: ${HOLD_SWEEP_INTERVAL_SECONDS:-60}
+      HOLD_SWEEP_ENABLED: ${HOLD_SWEEP_ENABLED:-true}
     ports:
       - '${PORT:-3000}:3000'
     depends_on:
@@ -54,6 +58,22 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    restart: unless-stopped
+
+  # The same image as `app`, run as a sweeper. Optional: the API processes sweep on their own
+  # timer, and the advisory lock means running both is safe.
+  worker:
+    build: .
+    command: ['node', 'dist/src/worker.js']
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/booking_engine
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HOLD_SWEEP_INTERVAL_SECONDS: ${HOLD_SWEEP_INTERVAL_SECONDS:-60}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
