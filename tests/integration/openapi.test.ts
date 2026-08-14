@@ -33,6 +33,15 @@ const ROUTES: Array<[method: string, path: string]> = [
   ['put', '/resources/{id}/exceptions/{date}'],
   ['delete', '/resources/{id}/exceptions/{date}'],
   ['get', '/resources/{id}/availability'],
+  ['post', '/resources/{id}/bookings'],
+  ['get', '/bookings/{id}'],
+  ['post', '/bookings/{id}/confirm'],
+  ['post', '/bookings/{id}/cancel'],
+  ['post', '/bookings/{id}/complete'],
+  ['post', '/bookings/{id}/no-show'],
+  ['post', '/bookings/{id}/reschedule'],
+  ['get', '/resources/{id}/bookings'],
+  ['get', '/bookings'],
 ]
 
 describe('OpenAPI document', () => {
