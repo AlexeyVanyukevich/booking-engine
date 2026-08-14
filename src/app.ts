@@ -8,6 +8,7 @@ import type { Kysely } from 'kysely'
 import type { Config } from './config.js'
 import type { Database } from './db/schema.js'
 import { availabilityRoutes } from './modules/availability/availability.routes.js'
+import { bookingRoutes } from './modules/bookings/booking.routes.js'
 import { exceptionRoutes } from './modules/exceptions/exception.routes.js'
 import { healthRoutes } from './modules/health/health.routes.js'
 import { resourceRoutes } from './modules/resources/resource.routes.js'
@@ -52,6 +53,10 @@ function openapiDocument(config: Config) {
       { name: 'Schedule', description: 'Regular weekly availability' },
       { name: 'Exceptions', description: 'Per-date overrides: a day off or altered hours' },
       { name: 'Availability', description: 'Computed slots, read-only' },
+      {
+        name: 'Bookings',
+        description: 'Creating bookings and moving them through their lifecycle',
+      },
       { name: 'Health', description: 'Liveness' },
     ],
   }
@@ -92,6 +97,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   void app.register(scheduleRoutes)
   void app.register(exceptionRoutes)
   void app.register(availabilityRoutes)
+  void app.register(bookingRoutes)
 
   return app
 }

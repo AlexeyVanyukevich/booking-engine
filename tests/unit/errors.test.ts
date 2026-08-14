@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   AppError,
+  ConcurrentUpdateError,
   InvalidRangeError,
   NotFoundError,
   ScheduleOverlapError,
   ScheduleShapeMismatchError,
   UnsupportedConcurrencyModeError,
   ValidationError,
+  isSerializationFailure,
+  rethrowContention,
 } from '../../src/shared/errors.js'
 
 interface ErrorCase {
@@ -53,6 +56,12 @@ const errorCases: ErrorCase[] = [
     statusCode: 404,
     code: 'not_found',
   },
+  {
+    name: 'ConcurrentUpdateError',
+    construct: (m, d) => new ConcurrentUpdateError(m, d),
+    statusCode: 503,
+    code: 'concurrent_update',
+  },
 ]
 
 describe('AppError hierarchy', () => {
@@ -86,5 +95,41 @@ describe('AppError hierarchy', () => {
   it('gives every error type a distinct code', () => {
     const codes = errorCases.map((testCase) => testCase.code)
     expect(new Set(codes).size).toBe(codes.length)
+  })
+})
+
+describe('contention translation', () => {
+  it.each([
+    { name: 'a deadlock', code: '40P01' },
+    { name: 'a serialization failure', code: '40001' },
+  ])('recognises $name', ({ code }) => {
+    expect(isSerializationFailure({ code })).toBe(true)
+  })
+
+  it.each([
+    { name: 'an exclusion violation', error: { code: '23P01' } },
+    { name: 'a foreign key violation', error: { code: '23503' } },
+    { name: 'an ordinary error', error: new Error('boom') },
+    { name: 'null', error: null },
+    { name: 'a string', error: 'nope' },
+  ])('does not mistake $name for contention', ({ error }) => {
+    expect(isSerializationFailure(error)).toBe(false)
+  })
+
+  it('translates a deadlock into a retryable 503', () => {
+    try {
+      rethrowContention({ code: '40P01' }, 'The booking')
+      expect.unreachable('rethrowContention must throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConcurrentUpdateError)
+      // The caller is told to retry rather than to treat this as a conflict over the slot.
+      expect((error as ConcurrentUpdateError).headers).toEqual({ 'retry-after': '1' })
+      expect((error as ConcurrentUpdateError).message).toContain('retry')
+    }
+  })
+
+  it('passes anything else through untouched', () => {
+    const original = new Error('boom')
+    expect(() => rethrowContention(original, 'The booking')).toThrow(original)
   })
 })
