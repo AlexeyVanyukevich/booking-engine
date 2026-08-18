@@ -12,3 +12,8 @@ coverage/
 
 .DS_Store
 .idea/
+test-results/
+playwright-report/
+
+# PIDs and logs for `./run dev --bg`.
+.run/
