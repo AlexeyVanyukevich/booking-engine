@@ -13,12 +13,27 @@ This document describes the whole system. It is delivered in three slices, each 
 | 1     | Resources, schedule, exceptions, availability                        | **Implemented**                     |
 | 2     | Bookings: `exclusive` and `shared`, lifecycle, hold expiry, listings | **Implemented**                     |
 | 3     | `pool` concurrency mode                                              | Sketched here, needs its own design |
+| 4     | Multitenancy, API keys, the key console                              | **Implemented**                     |
 
 Where this document and a spec disagree about something already built, **the spec wins** — it was written against the implementation. This document stays the system-level map.
 
 Formats, error codes, the technology stack, code layout and testing rules are **not** repeated here. They live in [conventions.md](conventions.md), which applies to every slice.
 
 ---
+
+## Tenancy
+
+_Spec 4._ Every row belongs to a tenant. `resources`, `schedule`, `schedule_exceptions` and
+`bookings` each carry a `tenant_id`, and the child tables reference their resource through a
+**composite** foreign key on `(tenant_id, resource_id)`, so a row whose tenant disagrees with
+its resource's has no referent and cannot be written. Repositories take `tenantId` as a
+required first parameter, which makes a forgotten filter a compile error rather than a leak.
+
+Callers authenticate with an API key carrying a set of scopes; the rules are in
+[conventions.md](conventions.md#authentication-and-scopes). Keys are issued from a console that
+runs as a **separate entrypoint bound to `127.0.0.1`** and has no authentication of its own —
+that is safe only because the port is unreachable from elsewhere, which is why the bind address
+is hard-coded rather than configurable.
 
 ## Data Model
 
@@ -29,6 +44,7 @@ An abstract bookable unit. Contains only the parameters the engine needs — no 
 | Column           | Type                    | Description                                                            |
 | ---------------- | ----------------------- | ---------------------------------------------------------------------- |
 | id               | UUID, PK                |                                                                        |
+| tenant_id        | UUID, FK → Tenant       | The owner. Unique on `(tenant_id, id)`, which the children reference   |
 | timezone         | text, NOT NULL          | **Named** IANA zone (e.g. `Europe/Warsaw`). Fixed offsets are rejected |
 | is_active        | boolean, default true   | Soft-disable without deleting                                          |
 | slot_duration    | interval, NOT NULL      | Booking quantum. `P1D` and `PT24H` are different values                |
@@ -73,6 +89,7 @@ Regular weekly availability for a resource.
 | Column      | Type                | Description                           |
 | ----------- | ------------------- | ------------------------------------- |
 | id          | UUID, PK            |                                       |
+| tenant_id   | UUID, FK → Tenant   | Composite FK with `resource_id`       |
 | resource_id | UUID, FK → Resource |                                       |
 | day_of_week | integer, 0–6        | Monday = 0, Sunday = 6                |
 | start_time  | time                | NULL for day-based resources (hotels) |
@@ -90,13 +107,14 @@ Three rules govern a submitted schedule as a whole, because they span rows and c
 
 Overrides for specific dates: a day off or altered hours.
 
-| Column      | Type                | Description               |
-| ----------- | ------------------- | ------------------------- |
-| id          | UUID, PK            |                           |
-| resource_id | UUID, FK → Resource |                           |
-| date        | date, NOT NULL      | The date being overridden |
-| start_time  | time                | NULL = day off            |
-| end_time    | time                | NULL = day off            |
+| Column      | Type                | Description                     |
+| ----------- | ------------------- | ------------------------------- |
+| id          | UUID, PK            |                                 |
+| tenant_id   | UUID, FK → Tenant   | Composite FK with `resource_id` |
+| resource_id | UUID, FK → Resource |                                 |
+| date        | date, NOT NULL      | The date being overridden       |
+| start_time  | time                | NULL = day off                  |
+| end_time    | time                | NULL = day off                  |
 
 Unique on `(resource_id, date)`, which is what makes `PUT …/exceptions/:date` idempotent. An exception **replaces** the weekly schedule for its date entirely; it never merges with it. A day off is expressible for any resource, but altered hours only make sense for an intraday one — a day-based resource has no hours to alter.
 
@@ -113,13 +131,20 @@ A booking record. No domain fields (notes, guest count, etc.) — those belong t
 | Column      | Type                       | Description                                                              |
 | ----------- | -------------------------- | ------------------------------------------------------------------------ |
 | id          | UUID, PK                   |                                                                          |
+| tenant_id   | UUID, FK → Tenant          | Composite FK with `resource_id`                                          |
 | resource_id | UUID, FK → Resource        |                                                                          |
 | start_time  | timestamptz, NOT NULL      |                                                                          |
 | end_time    | timestamptz, NOT NULL      |                                                                          |
 | status      | text, NOT NULL             | `held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired` |
-| customer_id | text, NOT NULL             | Opaque external identifier                                               |
+| customer_id | text                       | Opaque external identifier. Optional — see below                         |
 | held_until  | timestamptz                | Set on `held` and `expired`; NULL otherwise                              |
 | created_at  | timestamptz, default now() |                                                                          |
+
+`customer_id` is optional because a caller keeping its own guest records has no need for the
+engine to hold one. It survived rather than being dropped because the engine **queries** by it:
+it is indexed, it backs `GET /bookings?customer_id=`, and it is one of the three fields that
+define what an idempotency key stands for. That is what separates it from arbitrary domain
+payload, which the engine still refuses to store.
 
 **Overlap prevention (exclusive, capacity = 1):**
 
@@ -218,6 +243,9 @@ Why not `duration % slot_duration == 0`, as an earlier draft of this document ha
 ### Resources
 
 ```
+GET    /resources?is_active=
+  → 200 [ { id, timezone, slot_duration, slot_anchor_time, capacity, concurrency_mode, is_active }, ... ]
+
 POST   /resources
   body: { timezone, slot_duration, slot_anchor_time?, capacity?, concurrency_mode }
   → 201 { id, timezone, slot_duration, slot_anchor_time, capacity, concurrency_mode, is_active }
@@ -286,7 +314,7 @@ An inactive resource answers with an empty slot list: it exists, so 404 would be
 ```
 POST   /resources/:id/bookings
   body: {
-    customer_id,
+    customer_id?,
     start_time,
     end_time,
     hold?: true,

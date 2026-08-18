@@ -18,9 +18,11 @@ import {
   type CaseResult,
   type SuiteContext,
 } from '../tests/fixtures/suites/index.js'
-import { httpTransport } from '../tests/fixtures/transport.js'
+import { httpTransport, withAuthorization } from '../tests/fixtures/transport.js'
 
 const BASE_URL = process.env.BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`
+const CONSOLE_URL =
+  process.env.CONSOLE_URL ?? `http://localhost:${process.env.CONSOLE_PORT ?? 3001}`
 const filter = process.argv[2]?.toLowerCase()
 
 const tty = process.stdout.isTTY
@@ -47,7 +49,49 @@ let skipped = 0
 /** Resources created along the way, removed at the end so a development database stays usable. */
 const created: string[] = []
 
-const transport = httpTransport(BASE_URL)
+/**
+ * Every request the engine serves needs a key, so the run begins by making one. It goes
+ * through the console rather than through SQL, which puts the control plane on the smoke path
+ * too: if key issuance breaks, `./run smoke` says so before any booking case runs.
+ */
+async function bootstrapKey(): Promise<string> {
+  const post = (path: string, fields: Record<string, string>) =>
+    fetch(`${CONSOLE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(fields),
+      redirect: 'manual',
+    })
+
+  const name = `smoke ${new Date().toISOString()}`
+  const created = await post('/tenants', { name })
+  if (created.status !== 303) {
+    throw new Error(
+      `The console refused to create a tenant (${created.status}). Is it running on ${CONSOLE_URL}? Start it with: npm run dev:console`,
+    )
+  }
+
+  // The console speaks HTML, so the id comes back through the listing rather than a body.
+  const listing = await (await fetch(`${CONSOLE_URL}/tenants`)).text()
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const tenantId = new RegExp(`([0-9a-f-]{36})/api-keys">${escaped}<`).exec(listing)?.[1]
+  if (tenantId === undefined) throw new Error('Could not find the tenant just created')
+
+  const issued = await post(`/tenants/${tenantId}/api-keys`, {
+    name: 'smoke',
+    preset: 'back_office',
+  })
+  const location = issued.headers.get('location')
+  if (location === null) throw new Error(`The console refused to issue a key (${issued.status})`)
+
+  const revealed = await (await fetch(new URL(location, CONSOLE_URL))).text()
+  const secret = /bk_live_[A-Za-z0-9]{51}/.exec(revealed)?.[0]
+  if (secret === undefined) throw new Error('The console did not reveal a secret')
+  return secret
+}
+
+const apiKey = await bootstrapKey()
+const transport = withAuthorization(httpTransport(BASE_URL), () => `Bearer ${apiKey}`)
 const api = new Api(transport)
 
 const context: SuiteContext = {

@@ -126,6 +126,9 @@ Every error response has the same shape:
 | `invalid_interval`             | 400    | `end_time <= start_time`                                      |
 | `invalid_slot_boundary`        | 400    | Start or end does not fall on a slot boundary                 |
 | `outside_schedule`             | 400    | A slot in the requested run is not offered                    |
+| `unauthorized`                 | 401    | Missing, malformed, unknown or revoked key; inactive tenant   |
+| `forbidden_scope`              | 403    | Valid key, but it does not hold the scope the route requires  |
+| `forbidden_origin`             | 403    | A console write whose `Origin` is not the console itself      |
 | `not_found`                    | 404    | No such resource or booking, or no such route                 |
 | `slot_unavailable`             | 409    | The slots exist and are offered, but capacity is taken        |
 | `resource_inactive`            | 409    | The resource exists but `is_active` is false                  |
@@ -134,11 +137,49 @@ Every error response has the same shape:
 | `idempotency_key_reused`       | 409    | Same key, different request body                              |
 | `hold_expired`                 | 410    | `confirm` on a hold whose `held_until` has passed             |
 | `unsupported_media_type`       | 415    | Body sent with a content type the route cannot parse          |
+| `rate_limited`                 | 429    | The per-key limit for this minute is used up                  |
 | `internal_error`               | 500    | Anything unexpected                                           |
 | `concurrent_update`            | 503    | Contention rolled the transaction back; retry the request     |
 
 `slot_unavailable` and `outside_schedule` mean different things and must not be conflated: the
 first says the slots are offered but taken, the second that they were never offered.
+
+Every authentication failure answers the same `unauthorized` with the same message, whatever
+went wrong. Distinguishing "no such key" from "wrong secret" would turn key-prefix enumeration
+into a usable probe. `forbidden_scope` is different: it names the scope it wanted in `details`,
+which leaks nothing — the caller already knows which route it called — and turns a
+misconfigured key from a guessing game into a one-line fix.
+
+### Authentication and scopes
+
+_Introduced by spec 4._
+
+Every route except `GET /health`, `GET /` and the `/docs` tree requires
+`Authorization: Bearer bk_live_...`. A key belongs to one tenant and sees only that tenant's
+rows; another tenant's id answers `404`, never `403`, so the response cannot be used to learn
+that an id exists.
+
+A key holds a **set** of scopes, and each route requires exactly one of them by membership.
+Nothing implies anything else:
+
+| Scope               | Routes                                                    |
+| ------------------- | --------------------------------------------------------- |
+| `resources.read`    | `GET /resources`, `GET /resources/:id`                    |
+| `resources.write`   | `POST` / `PATCH` / `DELETE /resources`                    |
+| `schedule.read`     | `GET .../schedule`, `GET .../exceptions`                  |
+| `schedule.write`    | `PUT .../schedule`, `PUT` / `DELETE .../exceptions/:date` |
+| `availability.read` | `GET .../availability`                                    |
+| `bookings.read`     | `GET /bookings/:id`                                       |
+| `bookings.write`    | `POST .../bookings`, every `POST /bookings/:id/...`       |
+| `bookings.list`     | `GET /resources/:id/bookings`, `GET /bookings`            |
+
+`bookings.write` does not confer `bookings.read`, and neither confers `bookings.list`. That is
+the point of the model rather than an oversight: a partner channel that may create bookings
+must not be able to read the tenant's whole calendar, and nested tiers cannot express it.
+
+Routes declare their requirement as `config: { scope }` beside the schema, or `config:
+{ public: true }`. A route that declares neither fails at **startup**, so a route added later
+cannot quietly admit any key.
 
 `concurrent_update` is not a third kind of conflict. Postgres reports a deadlock as SQLSTATE
 `40P01` and a serialization failure as `40001`; both mean the transaction was rolled back
