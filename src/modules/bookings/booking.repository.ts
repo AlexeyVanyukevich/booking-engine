@@ -26,7 +26,7 @@ export interface BookingRow {
   start_time: Date
   end_time: Date
   status: BookingStatus
-  customer_id: string
+  customer_id: string | null
   concurrency_mode: ConcurrencyMode
   held_until: Date | null
   idempotency_key: string | null
@@ -38,11 +38,12 @@ export interface BookingWithZone extends BookingRow {
 }
 
 export interface NewBooking {
+  tenant_id: string
   resource_id: string
   start_time: Date
   end_time: Date
   status: BookingStatus
-  customer_id: string
+  customer_id: string | null
   concurrency_mode: ConcurrencyMode
   /** A literal instant, or a database-side expression such as `holdExpiry()`. */
   held_until: Date | Expression<Date> | null
@@ -56,6 +57,7 @@ export interface ActiveBooking {
 }
 
 export interface ListFilter {
+  tenantId: string
   resourceId?: string
   customerId?: string
   from: Date
@@ -97,12 +99,17 @@ export class BookingRepository {
    * resource was deleted in that same window.
    */
   async inWriteTransaction<T>(
+    tenantId: string,
     resourceId: string,
     lockResource: boolean,
     work: (trx: Trx, resource: ResourceRow | undefined) => Promise<T>,
   ): Promise<T> {
     return this.db.transaction().execute(async (trx) => {
-      const query = trx.selectFrom('resources').select(resourceColumns).where('id', '=', resourceId)
+      const query = trx
+        .selectFrom('resources')
+        .select(resourceColumns)
+        .where('tenant_id', '=', tenantId)
+        .where('id', '=', resourceId)
       const resource = await (lockResource ? query.forUpdate() : query).executeTakeFirst()
 
       // Rows are locked in id order rather than in whatever order the planner scans them.
@@ -140,6 +147,7 @@ export class BookingRepository {
    */
   async activeOverlapping(
     trx: Trx,
+    tenantId: string,
     resourceId: string,
     start: Date,
     end: Date,
@@ -148,6 +156,7 @@ export class BookingRepository {
     let query = trx
       .selectFrom('bookings')
       .select(['id', 'start_time', 'end_time'])
+      .where('tenant_id', '=', tenantId)
       .where('resource_id', '=', resourceId)
       .where('status', 'in', ['held', 'confirmed'])
       .where('start_time', '<', end)
@@ -161,10 +170,16 @@ export class BookingRepository {
    * Bookings that hold capacity over the window. A `held` row whose `held_until` has passed
    * is excluded by predicate, so a read never waits for a sweep or a worker.
    */
-  async activeInRange(resourceId: string, start: Date, end: Date): Promise<ActiveBooking[]> {
+  async activeInRange(
+    tenantId: string,
+    resourceId: string,
+    start: Date,
+    end: Date,
+  ): Promise<ActiveBooking[]> {
     return this.db
       .selectFrom('bookings')
       .select(['id', 'start_time', 'end_time'])
+      .where('tenant_id', '=', tenantId)
       .where('resource_id', '=', resourceId)
       .where('start_time', '<', end)
       .where('end_time', '>', start)
@@ -179,12 +194,14 @@ export class BookingRepository {
 
   async findByIdempotencyKey(
     trx: Trx,
+    tenantId: string,
     resourceId: string,
     key: string,
   ): Promise<BookingRow | undefined> {
     return trx
       .selectFrom('bookings')
       .select(columns)
+      .where('tenant_id', '=', tenantId)
       .where('resource_id', '=', resourceId)
       .where('idempotency_key', '=', key)
       .executeTakeFirst()
@@ -211,10 +228,11 @@ export class BookingRepository {
    * other's row lock only at the write, and the loser's write still matches on `id` alone —
    * overwriting the winner's terminal status instead of being refused.
    */
-  async findIn(trx: Trx, id: string): Promise<BookingRow | undefined> {
+  async findIn(trx: Trx, tenantId: string, id: string): Promise<BookingRow | undefined> {
     return trx
       .selectFrom('bookings')
       .select(columns)
+      .where('tenant_id', '=', tenantId)
       .where('id', '=', id)
       .forUpdate()
       .executeTakeFirst()
@@ -243,7 +261,7 @@ export class BookingRepository {
       .executeTakeFirstOrThrow()
   }
 
-  async findById(id: string): Promise<BookingWithZone | undefined> {
+  async findById(tenantId: string, id: string): Promise<BookingWithZone | undefined> {
     return this.db
       .selectFrom('bookings')
       .innerJoin('resources', 'resources.id', 'bookings.resource_id')
@@ -259,6 +277,7 @@ export class BookingRepository {
         'bookings.idempotency_key',
         'resources.timezone',
       ])
+      .where('bookings.tenant_id', '=', tenantId)
       .where('bookings.id', '=', id)
       .executeTakeFirst()
   }
@@ -280,6 +299,7 @@ export class BookingRepository {
         'bookings.idempotency_key',
         'resources.timezone',
       ])
+      .where('bookings.tenant_id', '=', filter.tenantId)
       .where('bookings.start_time', '<', filter.to)
       .where('bookings.end_time', '>', filter.from)
       .orderBy('bookings.start_time')

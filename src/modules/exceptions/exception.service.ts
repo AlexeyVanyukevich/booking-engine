@@ -26,15 +26,25 @@ export class ExceptionService {
     private readonly maxRangeDays: number,
   ) {}
 
-  async list(resourceId: string, from: string, to: string): Promise<ExceptionResponse[]> {
-    await this.resources.loadOrFail(resourceId)
+  async list(
+    tenantId: string,
+    resourceId: string,
+    from: string,
+    to: string,
+  ): Promise<ExceptionResponse[]> {
+    await this.resources.loadOrFail(tenantId, resourceId)
     assertValidRange(from, to, this.maxRangeDays)
-    const rows = await this.repository.listInRange(resourceId, from, to)
+    const rows = await this.repository.listInRange(tenantId, resourceId, from, to)
     return rows.map(toResponse)
   }
 
-  async put(resourceId: string, date: string, body: PutExceptionBody): Promise<ExceptionResponse> {
-    const resource = await this.resources.loadOrFail(resourceId)
+  async put(
+    tenantId: string,
+    resourceId: string,
+    date: string,
+    body: PutExceptionBody,
+  ): Promise<ExceptionResponse> {
+    const resource = await this.resources.loadOrFail(tenantId, resourceId)
     const duration = parseSlotDuration(resource.slot_duration)
 
     const bothNull = body.start_time === null && body.end_time === null
@@ -61,13 +71,19 @@ export class ExceptionService {
       }
     }
 
-    const row = await this.repository.upsert(resourceId, date, body.start_time, body.end_time)
+    const row = await this.repository.upsert(
+      tenantId,
+      resourceId,
+      date,
+      body.start_time,
+      body.end_time,
+    )
     return toResponse(row)
   }
 
   /** Idempotent: deleting an exception that does not exist is not an error. */
-  async delete(resourceId: string, date: string): Promise<void> {
-    await this.resources.loadOrFail(resourceId)
-    await this.repository.delete(resourceId, date)
+  async delete(tenantId: string, resourceId: string, date: string): Promise<void> {
+    await this.resources.loadOrFail(tenantId, resourceId)
+    await this.repository.delete(tenantId, resourceId, date)
   }
 }

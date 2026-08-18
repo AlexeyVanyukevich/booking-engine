@@ -20,11 +20,12 @@ export class AvailabilityService {
   ) {}
 
   async getAvailability(
+    tenantId: string,
     resourceId: string,
     from: string,
     to: string,
   ): Promise<AvailabilityResponse> {
-    const resource = await this.resources.loadOrFail(resourceId)
+    const resource = await this.resources.loadOrFail(tenantId, resourceId)
     return this.computeForResource(resource, from, to)
   }
 
@@ -45,8 +46,8 @@ export class AvailabilityService {
     if (!resource.is_active) return { slots: [] }
 
     const [scheduleRows, exceptionRows] = await Promise.all([
-      this.schedule.listByResource(resource.id),
-      this.exceptions.listInRange(resource.id, from, to),
+      this.schedule.listByResource(resource.tenant_id, resource.id),
+      this.exceptions.listInRange(resource.tenant_id, resource.id, from, to),
     ])
 
     const dates = enumerateDates(from, to, resource.timezone)
@@ -71,7 +72,7 @@ export class AvailabilityService {
     const first = new Date(Math.min(...slots.map((slot) => Date.parse(slot.start))))
     const last = new Date(Math.max(...slots.map((slot) => Date.parse(slot.end))))
 
-    const active = await this.bookings.activeInRange(resource.id, first, last)
+    const active = await this.bookings.activeInRange(resource.tenant_id, resource.id, first, last)
 
     return {
       slots: slots.map((slot) => ({

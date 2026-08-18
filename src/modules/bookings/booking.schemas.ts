@@ -30,11 +30,14 @@ const EndTime = Type.String({
 
 export const CreateBookingBody = Type.Object(
   {
-    customer_id: Type.String({
-      minLength: 1,
-      description: 'Opaque external identifier. The engine never interprets it.',
-      examples: ['customer-42'],
-    }),
+    customer_id: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description:
+          'Opaque external identifier. The engine never interprets it. Optional: a caller keeping its own guest records need not hand one over, and a booking without it is invisible to `GET /bookings?customer_id=`. It still takes part in what an idempotency key stands for, so a replay that adds or drops it is refused.',
+        examples: ['customer-42'],
+      }),
+    ),
     start_time: StartTime,
     end_time: EndTime,
     hold: Type.Optional(
@@ -84,7 +87,9 @@ export const BookingResponse = Type.Object(
     status: Type.String({
       description: '`held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired`',
     }),
-    customer_id: Type.String(),
+    customer_id: Type.Union([Type.String(), Type.Null()], {
+      description: 'Null when the booking was created without one.',
+    }),
     held_until: Type.Union([Type.String(), Type.Null()], {
       description: 'Set on `held` and `expired` rows, null everywhere else.',
     }),
@@ -139,11 +144,14 @@ export const ResourceBookingsQuery = Type.Object({
 export type ResourceBookingsQuery = Static<typeof ResourceBookingsQuery>
 
 export const CustomerBookingsQuery = Type.Object({
-  customer_id: Type.String({
-    minLength: 1,
-    description: 'Required: without it the query is bounded only by the date window.',
-    examples: ['customer-42'],
-  }),
+  customer_id: Type.Optional(
+    Type.String({
+      minLength: 1,
+      description:
+        "Narrows the list to one customer. Omitted, every booking of the tenant inside the window is returned — the owner's calendar. It was once required because the query would otherwise be bounded only by the date window; under a tenant filter it is bounded by the tenant and the window, the same bound every other listing has.",
+      examples: ['customer-42'],
+    }),
+  ),
   from: RangeDate('First date, inclusive, interpreted in UTC', '2026-07-20'),
   to: RangeDate('Last date, exclusive, interpreted in UTC', '2026-07-27'),
   status: StatusFilter,

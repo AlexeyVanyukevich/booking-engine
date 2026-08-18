@@ -15,6 +15,7 @@ import {
 import type { ResourceRepository, ResourceRow } from './resource.repository.js'
 import type {
   CreateResourceBody,
+  ResourceListQuery,
   ResourceResponse,
   UpdateResourceBody,
 } from './resource.schemas.js'
@@ -83,7 +84,9 @@ function assertCapacityMatchesMode(mode: string, capacity: number): void {
 function isBookingReference(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false
   const candidate = error as { code?: unknown; constraint?: unknown }
-  return candidate.code === '23503' && candidate.constraint === 'bookings_resource_id_fkey'
+  // Migration 003 replaced the single-column key with the composite `bookings_resource_fk`,
+  // so the name matched here moved with it.
+  return candidate.code === '23503' && candidate.constraint === 'bookings_resource_fk'
 }
 
 export function toResponse(row: ResourceRow): ResourceResponse {
@@ -101,7 +104,7 @@ export function toResponse(row: ResourceRow): ResourceResponse {
 export class ResourceService {
   constructor(private readonly repository: ResourceRepository) {}
 
-  async create(body: CreateResourceBody): Promise<ResourceResponse> {
+  async create(tenantId: string, body: CreateResourceBody): Promise<ResourceResponse> {
     if (body.concurrency_mode === 'pool') {
       throw new UnsupportedConcurrencyModeError(
         'concurrency_mode "pool" is not implemented yet; storing a resource the engine cannot serve availability for would be worse than refusing it',
@@ -118,6 +121,7 @@ export class ResourceService {
     assertCapacityMatchesMode(body.concurrency_mode, capacity)
 
     const row = await this.repository.insert({
+      tenant_id: tenantId,
       timezone: body.timezone,
       slot_duration: duration.iso,
       slot_anchor_time: anchor,
@@ -128,12 +132,17 @@ export class ResourceService {
     return toResponse(row)
   }
 
-  async getById(id: string): Promise<ResourceResponse> {
-    return toResponse(await this.loadOrFail(id))
+  async getById(tenantId: string, id: string): Promise<ResourceResponse> {
+    return toResponse(await this.loadOrFail(tenantId, id))
   }
 
-  async update(id: string, body: UpdateResourceBody): Promise<ResourceResponse> {
-    const current = await this.loadOrFail(id)
+  async list(tenantId: string, query: ResourceListQuery): Promise<ResourceResponse[]> {
+    const rows = await this.repository.list(tenantId, { isActive: query.is_active })
+    return rows.map(toResponse)
+  }
+
+  async update(tenantId: string, id: string, body: UpdateResourceBody): Promise<ResourceResponse> {
+    const current = await this.loadOrFail(tenantId, id)
 
     // Validate the resulting state, not the patch: changing only the duration can invalidate
     // an anchor that was legal before.
@@ -144,7 +153,7 @@ export class ResourceService {
     assertAnchorMatchesDuration(duration, anchor)
     assertCapacityMatchesMode(current.concurrency_mode, capacity)
 
-    const row = await this.repository.update(id, {
+    const row = await this.repository.update(tenantId, id, {
       slot_duration: duration.iso,
       slot_anchor_time: anchor,
       capacity,
@@ -155,10 +164,10 @@ export class ResourceService {
     return toResponse(row)
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(tenantId: string, id: string): Promise<void> {
     let deleted: boolean
     try {
-      deleted = await this.repository.delete(id)
+      deleted = await this.repository.delete(tenantId, id)
     } catch (error) {
       if (isBookingReference(error)) {
         throw new ResourceHasBookingsError(
@@ -175,8 +184,8 @@ export class ResourceService {
     if (!deleted) throw new NotFoundError(`Resource ${id} not found`)
   }
 
-  async loadOrFail(id: string): Promise<ResourceRow> {
-    const row = await this.repository.findById(id)
+  async loadOrFail(tenantId: string, id: string): Promise<ResourceRow> {
+    const row = await this.repository.findById(tenantId, id)
     if (!row) throw new NotFoundError(`Resource ${id} not found`)
     return row
   }

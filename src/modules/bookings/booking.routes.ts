@@ -33,6 +33,7 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.post(
     '/resources/:id/bookings',
     {
+      config: { scope: 'bookings.write' },
       schema: {
         tags: ['Bookings'],
         summary: 'Book a run of slots',
@@ -60,7 +61,7 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
       },
     },
     async (request, reply) => {
-      const result = await service.create(request.params.id, request.body)
+      const result = await service.create(request.tenantId, request.params.id, request.body)
       return reply.status(result.created ? 201 : 200).send(result.booking)
     },
   )
@@ -68,6 +69,7 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get(
     '/bookings/:id',
     {
+      config: { scope: 'bookings.read' },
       schema: {
         tags: ['Bookings'],
         summary: 'Read a booking',
@@ -75,12 +77,13 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         response: { 200: BookingResponse, 404: ErrorResponse },
       },
     },
-    async (request) => service.getById(request.params.id),
+    async (request) => service.getById(request.tenantId, request.params.id),
   )
 
   app.post(
     '/bookings/:id/confirm',
     {
+      config: { scope: 'bookings.write' },
       schema: {
         tags: ['Bookings'],
         summary: 'Confirm a held booking',
@@ -98,12 +101,13 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         },
       },
     },
-    async (request) => service.apply(request.params.id, 'confirm'),
+    async (request) => service.apply(request.tenantId, request.params.id, 'confirm'),
   )
 
   app.post(
     '/bookings/:id/cancel',
     {
+      config: { scope: 'bookings.write' },
       schema: {
         tags: ['Bookings'],
         summary: 'Cancel a booking',
@@ -118,12 +122,13 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         },
       },
     },
-    async (request) => service.apply(request.params.id, 'cancel'),
+    async (request) => service.apply(request.tenantId, request.params.id, 'cancel'),
   )
 
   app.post(
     '/bookings/:id/complete',
     {
+      config: { scope: 'bookings.write' },
       schema: {
         tags: ['Bookings'],
         summary: 'Mark a booking as completed',
@@ -138,12 +143,13 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         },
       },
     },
-    async (request) => service.apply(request.params.id, 'complete'),
+    async (request) => service.apply(request.tenantId, request.params.id, 'complete'),
   )
 
   app.post(
     '/bookings/:id/no-show',
     {
+      config: { scope: 'bookings.write' },
       schema: {
         tags: ['Bookings'],
         summary: 'Mark a booking as a no-show',
@@ -157,12 +163,13 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         },
       },
     },
-    async (request) => service.apply(request.params.id, 'no-show'),
+    async (request) => service.apply(request.tenantId, request.params.id, 'no-show'),
   )
 
   app.post(
     '/bookings/:id/reschedule',
     {
+      config: { scope: 'bookings.write' },
       schema: {
         tags: ['Bookings'],
         summary: 'Move a booking to a different run of slots',
@@ -181,12 +188,13 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         },
       },
     },
-    async (request) => service.reschedule(request.params.id, request.body),
+    async (request) => service.reschedule(request.tenantId, request.params.id, request.body),
   )
 
   app.get(
     '/resources/:id/bookings',
     {
+      config: { scope: 'bookings.list' },
       schema: {
         tags: ['Bookings'],
         summary: 'List the bookings of one resource',
@@ -199,23 +207,24 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         response: { 200: BookingListResponse, 400: ErrorResponse, 404: ErrorResponse },
       },
     },
-    async (request) => service.listForResource(request.params.id, request.query),
+    async (request) => service.listForResource(request.tenantId, request.params.id, request.query),
   )
 
   app.get(
     '/bookings',
     {
+      config: { scope: 'bookings.list' },
       schema: {
         tags: ['Bookings'],
         summary: "List one customer's bookings across resources",
         description: md(
-          '`customer_id` is required: without it the query would be bounded only by the date window, across every resource in the system.',
+          "`customer_id` is optional. Omitted, the answer is every booking this tenant holds inside the window, across all of its resources — the owner's calendar. The window is still required and still bounded, which is what keeps the response finite.",
           '**The window is interpreted in UTC here**, not in a resource timezone — the results span resources in different zones and none of them outranks the others. Each returned timestamp is still rendered in its own resource zone.',
         ),
         querystring: CustomerBookingsQuery,
         response: { 200: BookingListResponse, 400: ErrorResponse },
       },
     },
-    async (request) => service.listForCustomer(request.query),
+    async (request) => service.listForCustomer(request.tenantId, request.query),
   )
 }

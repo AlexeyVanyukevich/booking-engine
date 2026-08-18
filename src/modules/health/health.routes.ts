@@ -11,11 +11,14 @@ export const healthRoutes: FastifyPluginAsyncTypebox = async (app) => {
   // correct and useless to a person who has just started the engine and opened it in a
   // browser. Send them to the API reference instead. Hidden from the documentation: it is
   // navigation, not part of the contract.
-  app.get('/', { schema: { hide: true } }, async (_request, reply) => reply.redirect('/docs'))
+  app.get('/', { config: { public: true }, schema: { hide: true } }, async (_request, reply) =>
+    reply.redirect('/docs'),
+  )
 
   app.get(
     '/health',
     {
+      config: { public: true },
       schema: {
         tags: ['Health'],
         summary: 'Liveness probe',

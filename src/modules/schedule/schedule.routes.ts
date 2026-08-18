@@ -16,6 +16,7 @@ export const scheduleRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get(
     '/resources/:id/schedule',
     {
+      config: { scope: 'schedule.read' },
       schema: {
         tags: ['Schedule'],
         summary: 'Read the weekly schedule',
@@ -24,12 +25,13 @@ export const scheduleRoutes: FastifyPluginAsyncTypebox = async (app) => {
         response: { 200: ScheduleResponse, 404: ErrorResponse },
       },
     },
-    async (request) => service.list(request.params.id),
+    async (request) => service.list(request.tenantId, request.params.id),
   )
 
   app.put(
     '/resources/:id/schedule',
     {
+      config: { scope: 'schedule.write' },
       schema: {
         tags: ['Schedule'],
         summary: 'Replace the weekly schedule',
@@ -48,6 +50,6 @@ export const scheduleRoutes: FastifyPluginAsyncTypebox = async (app) => {
         response: { 200: ScheduleResponse, 400: ErrorResponse, 404: ErrorResponse },
       },
     },
-    async (request) => service.replace(request.params.id, request.body),
+    async (request) => service.replace(request.tenantId, request.params.id, request.body),
   )
 }

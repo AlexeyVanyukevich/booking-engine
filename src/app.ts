@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify'
+import fastifyRateLimit from '@fastify/rate-limit'
 import fastifySwagger from '@fastify/swagger'
 import fastifySwaggerUi from '@fastify/swagger-ui'
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
@@ -13,6 +14,9 @@ import { exceptionRoutes } from './modules/exceptions/exception.routes.js'
 import { healthRoutes } from './modules/health/health.routes.js'
 import { resourceRoutes } from './modules/resources/resource.routes.js'
 import { scheduleRoutes } from './modules/schedule/schedule.routes.js'
+import { TenantRepository } from './modules/tenants/tenant.repository.js'
+import { TenantService } from './modules/tenants/tenant.service.js'
+import { registerAuth } from './shared/auth.js'
 import { registerErrorHandler } from './shared/errors.js'
 
 export interface AppDeps {
@@ -44,7 +48,8 @@ function openapiDocument(config: Config) {
           'Timestamps carry an offset: `2026-07-20T09:00:00+02:00`.',
           'Errors always have the shape `{ error, message, details? }`.',
         ],
-        'There is no authentication. The engine is an internal service; authorization belongs to the domain layer above it.',
+        "Every request carries an API key in an `Authorization: Bearer` header. A key belongs to one tenant and sees only that tenant's rows; another tenant's id answers `404`, never `403`.",
+        "A key holds a set of scopes, and each route requires exactly one of them. No scope implies another: `bookings.write` does not confer `bookings.read`, which is what lets a partner channel create bookings without being able to list the tenant's calendar. Keys are issued from the console.",
       ),
     },
     servers: [{ url: `http://localhost:${config.port}`, description: 'Local' }],
@@ -62,9 +67,14 @@ function openapiDocument(config: Config) {
   }
 }
 
-export function buildApp(deps: AppDeps): FastifyInstance {
+export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: { level: deps.config.logLevel },
+    logger: {
+      level: deps.config.logLevel,
+      // Without this the first authenticated request writes a live credential to the log,
+      // where it outlives the key it belongs to.
+      redact: ['req.headers.authorization'],
+    },
     // Fastify defaults AJV to removeAdditional: true, which silently strips unknown
     // properties. This engine needs them rejected instead: `additionalProperties: false`
     // on the PATCH body is what makes `timezone` and `concurrency_mode` immutable, and a
@@ -76,6 +86,21 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.decorate('config', deps.config)
 
   registerErrorHandler(app)
+
+  // Per key, so one tenant cannot exhaust the engine for the others. The authentication hook
+  // has not run when the generator is called, so the raw header stands in for the key id — it
+  // identifies the caller just as well and needs no database round trip.
+  await app.register(fastifyRateLimit, {
+    max: deps.config.rateLimitPerMinute,
+    timeWindow: '1 minute',
+    keyGenerator: (request) => request.headers.authorization ?? request.ip,
+    errorResponseBuilder: () => ({
+      error: 'rate_limited',
+      message: 'Too many requests; slow down and retry',
+    }),
+  })
+
+  registerAuth(app, new TenantService(new TenantRepository(deps.db)))
 
   // Generated from the same TypeBox schemas the routes validate against, so the
   // documentation cannot drift from the behaviour. Registered before the route

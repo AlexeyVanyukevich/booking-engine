@@ -14,10 +14,16 @@ export class ExceptionRepository {
   constructor(private readonly db: Kysely<Database>) {}
 
   /** Half-open on `to`, matching every other range in the API. */
-  async listInRange(resourceId: string, from: string, to: string): Promise<ExceptionRow[]> {
+  async listInRange(
+    tenantId: string,
+    resourceId: string,
+    from: string,
+    to: string,
+  ): Promise<ExceptionRow[]> {
     return this.db
       .selectFrom('schedule_exceptions')
       .select(columns)
+      .where('tenant_id', '=', tenantId)
       .where('resource_id', '=', resourceId)
       .where('date', '>=', from)
       .where('date', '<', to)
@@ -26,6 +32,7 @@ export class ExceptionRepository {
   }
 
   async upsert(
+    tenantId: string,
     resourceId: string,
     date: string,
     startTime: string | null,
@@ -33,7 +40,13 @@ export class ExceptionRepository {
   ): Promise<ExceptionRow> {
     return this.db
       .insertInto('schedule_exceptions')
-      .values({ resource_id: resourceId, date, start_time: startTime, end_time: endTime })
+      .values({
+        tenant_id: tenantId,
+        resource_id: resourceId,
+        date,
+        start_time: startTime,
+        end_time: endTime,
+      })
       .onConflict((oc) =>
         oc
           .columns(['resource_id', 'date'])
@@ -43,9 +56,10 @@ export class ExceptionRepository {
       .executeTakeFirstOrThrow()
   }
 
-  async delete(resourceId: string, date: string): Promise<void> {
+  async delete(tenantId: string, resourceId: string, date: string): Promise<void> {
     await this.db
       .deleteFrom('schedule_exceptions')
+      .where('tenant_id', '=', tenantId)
       .where('resource_id', '=', resourceId)
       .where('date', '=', date)
       .execute()

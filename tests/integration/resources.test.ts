@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Api } from '../fixtures/api.js'
-import { injectTransport } from '../fixtures/transport.js'
+import { withAuthorization, injectTransport } from '../fixtures/transport.js'
 import { MALFORMED_UUIDS, unknownUuid } from '../fixtures/ids.js'
 import { aResource, aSharedResource, aDayBasedResource } from '../fixtures/resources.js'
 import {
@@ -10,20 +10,20 @@ import {
   rejectedResources,
 } from '../fixtures/datasets/resource-validation.js'
 import { WEEKDAYS, aWindow } from '../fixtures/schedules.js'
-import { buildTestApp, closeTestDb, resetDb } from './helpers.js'
+import { buildTestApp, closeTestDb, resetDbWithTenant, testAuthorization } from './helpers.js'
 
 let api: Api
 let close: () => Promise<void>
 
 beforeAll(async () => {
   const app = await buildTestApp()
-  api = new Api(injectTransport(app))
+  api = new Api(withAuthorization(injectTransport(app), testAuthorization))
   close = async () => {
     await app.close()
   }
 })
 
-beforeEach(resetDb)
+beforeEach(resetDbWithTenant)
 
 afterAll(async () => {
   await close()
@@ -203,5 +203,44 @@ describe('DELETE /resources/:id with bookings', () => {
   it('still deletes a resource that has none', async () => {
     const id = await api.givenResource(aResource())
     expect((await api.deleteResource(id)).statusCode).toBe(204)
+  })
+})
+
+describe('GET /resources', () => {
+  it('answers an empty array when the tenant owns nothing', async () => {
+    const response = await api.listResources()
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual([])
+  })
+
+  it('lists the tenant resources oldest first', async () => {
+    const first = await api.givenResource(aResource())
+    const second = await api.givenResource(aResource())
+
+    const response = await api.listResources()
+    expect(response.json().map((row: { id: string }) => row.id)).toEqual([first, second])
+  })
+
+  it('returns the same shape as reading one', async () => {
+    const id = await api.givenResource(aResource())
+    const [listed] = (await api.listResources()).json()
+    expect(listed).toEqual((await api.getResource(id)).json())
+  })
+
+  it.each([
+    ['is_active=false', false],
+    ['is_active=true', true],
+  ])('filters by %s', async (query, expectRetired) => {
+    const retired = await api.givenResource(aResource())
+    await api.patchResource(retired, { is_active: false })
+    const live = await api.givenResource(aResource())
+
+    const ids = (await api.listResources(query)).json().map((row: { id: string }) => row.id)
+    expect(ids).toEqual([expectRetired ? live : retired])
+  })
+
+  it('rejects an unknown query parameter rather than ignoring it', async () => {
+    const response = await api.listResources('tenant_id=someone-else')
+    expect(response.statusCode).toBe(400)
   })
 })

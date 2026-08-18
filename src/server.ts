@@ -5,7 +5,7 @@ import { startHoldSweeper } from './modules/bookings/hold-sweeper.js'
 
 const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
-const app = buildApp({ config, db })
+const app = await buildApp({ config, db })
 
 // Leaving this on by default is deliberate. A dead worker is an invisible failure —
 // correctness does not depend on it, requests keep being served, nothing alerts — so the
