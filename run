@@ -6,8 +6,43 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Recorded before `.env` is loaded, because afterwards there is no telling the two apart, and
+# `resolve_running_port` needs to: an explicit port on the command line is an instruction,
+# while one from the file is only a default that a running container may contradict.
+PORT_FROM_SHELL="${PORT:+yes}"
+
+# `.env` is the local counterpart of what compose already substitutes for the Docker stack.
+# Loading it here rather than in each npm script is what keeps this script's own checks — the
+# port guards, the health waits, the URLs it prints — agreeing with the ports the processes
+# actually bind.
+#
+# Precedence is the conventional one: command line, then the file, then the defaults below.
+# That is why this reads the file line by line instead of sourcing it — `. ./.env` assigns
+# unconditionally and would let the file override an explicit `PORT=3100 ./run dev`.
+#
+# The grammar is plain `KEY=value`, matching what compose itself reads: no quoting, no
+# expansion, `#` starts a comment.
+load_env_file() {
+  [ -f .env ] || return 0
+  local line key
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in '' | \#*) continue ;; esac
+    key=${line%%=*}
+    [ -n "${!key:-}" ] && continue
+    export "$key=${line#*=}"
+  done < .env
+}
+
+# On the very first run `.env` does not exist yet; `need_env` creates it a moment later, and it
+# takes effect from the next invocation. Nothing is lost — a fresh `.env` is a copy of
+# `.env.example`, whose values are the defaults below.
+load_env_file
+
 APP_PORT="${PORT:-3000}"
+CONSOLE_PORT="${CONSOLE_PORT:-3001}"
 DB_HOST_PORT=5433
+# PIDs and logs for whatever `--bg` started. Not the Docker stack — that is `./run up`.
+RUN_STATE=".run"
 COMPOSE_DB_URL="postgres://postgres:postgres@localhost:${DB_HOST_PORT}/booking_engine"
 
 # ── output ───────────────────────────────────────────────────────────────────
@@ -86,21 +121,26 @@ require_free_port() {
 # shell, which would then point at whatever else owns 3000 — on this machine, a different
 # project. Ask Docker where the container is actually published.
 resolve_running_port() {
-  [ -n "${PORT:-}" ] && return 0
+  # A port named on the command line is the answer; nothing may second-guess it.
+  [ -n "$PORT_FROM_SHELL" ] && return 0
   command -v docker >/dev/null 2>&1 || return 0
 
   local published
-  published=$(docker compose port app 3000 2>/dev/null | sed -E 's/.*:([0-9]+)$/\1/')
+  # `|| published=""` is load-bearing: with `pipefail`, a `docker compose port` that finds no
+  # container makes the whole substitution non-zero, and `set -e` would abort the scenario
+  # here with no message. Not finding a container is an ordinary answer, not a failure.
+  published=$(docker compose port app 3000 2>/dev/null | sed -E 's/.*:([0-9]+)$/\1/') || published=""
+  # An `if`, not `[ ... ] && ...`: this is the last statement of the function, and the `&&`
+  # form returns 1 when the test is false, which under `set -e` aborts the caller with no
+  # message at all.
   if [ -n "$published" ]; then
     APP_PORT="$published"
-    return 0
   fi
 
-  # Not in Docker: fall back to what .env says the local engine uses.
-  if [ -f .env ]; then
-    published=$(grep -E '^PORT=' .env 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')
-    [ -n "$published" ] && APP_PORT="$published"
-  fi
+  # No further fallback: a `PORT` in `.env` is already in the environment by now, so
+  # `APP_PORT` was computed from it above. A running container still wins over the file,
+  # because the file says what the next start would use and the container says what is
+  # answering right now.
 }
 
 # Distinguishes "nothing is listening" from "something else is listening", which are very
@@ -150,32 +190,168 @@ wait_for_app() {
   die "The engine did not become healthy within 60 seconds." "Inspect it with: ./run logs app"
 }
 
-# ── scenarios ────────────────────────────────────────────────────────────────
+wait_for_console() {
+  step "Waiting for the console to answer"
+  local i
+  for i in $(seq 1 60); do
+    if curl -fsS "http://127.0.0.1:${CONSOLE_PORT}/tenants" >/dev/null 2>&1; then
+      ok "Console ready on http://127.0.0.1:${CONSOLE_PORT}"
+      return 0
+    fi
+    sleep 1
+  done
+  die "The console did not answer within 60 seconds." "Inspect it with: tail -f ${RUN_STATE}/console.log"
+}
 
-cmd_dev() {
+# ── the two local processes ──────────────────────────────────────────────────
+#
+# `dev` and `debug` start the engine *and* the console, because since spec 4 the engine
+# refuses every request without an API key and the only place to issue one is the console.
+# Starting either alone leaves you unable to use either.
+
+local_prepare() {
   need_docker; need_node; need_deps; need_env
   require_free_port "$APP_PORT"
+  require_free_port "$CONSOLE_PORT"
   step "Starting the database"
   docker compose up -d db
   wait_for_db
   step "Applying migrations"
   DATABASE_URL="$COMPOSE_DB_URL" npm run --silent migrate
-  step "Starting the engine with reload"
-  note "Press Ctrl-C to stop. The database keeps running; stop it with ./run down"
+}
+
+# Pure bash rather than `sed -u`/`sed -l`, whose unbuffered flag is spelled differently on
+# BSD and GNU. A read loop is line-oriented by nature and portable.
+prefix_lines() {
+  local label=$1 line
+  while IFS= read -r line; do
+    printf '%s%s%s %s\n' "$DIM" "$label" "$OFF" "$line"
+  done
+}
+
+# Kills a process and everything below it. `npm run` forks the runner and `tsx watch` forks
+# the process that actually holds the port, so killing only the launcher orphans the server.
+kill_tree() {
+  local pid=$1 child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child"; done
+  kill "$pid" 2>/dev/null || true
+}
+
+# Both in this terminal, one Ctrl-C for the pair.
+#
+# The servers write to the same log files `--bg` uses and are followed by a `tail` apiece,
+# rather than being piped through a labeller directly. That is deliberate: a piped background
+# job records the PID of the *last* command in the pipeline, so a trap that kills it leaves
+# the server running. Redirecting instead keeps `$!` pointing at the npm process itself,
+# which is what `kill_tree` needs to walk.
+run_pair_foreground() {
+  local server_script=$1 console_script=$2 api_pid console_pid
+  mkdir -p "$RUN_STATE"
+  : >"$RUN_STATE/api.log"
+  : >"$RUN_STATE/console.log"
+
+  DATABASE_URL="$COMPOSE_DB_URL" \
+    npm run --silent "$server_script" >>"$RUN_STATE/api.log" 2>&1 &
+  api_pid=$!
+  DATABASE_URL="$COMPOSE_DB_URL" CONSOLE_PORT="$CONSOLE_PORT" \
+    npm run --silent "$console_script" >>"$RUN_STATE/console.log" 2>&1 &
+  console_pid=$!
+
+  tail -qf "$RUN_STATE/api.log" | prefix_lines "[api]    " &
+  tail -qf "$RUN_STATE/console.log" | prefix_lines "[console]" &
+
+  trap "stop_pair $api_pid $console_pid" INT TERM
+  # Returns if either server exits on its own, which is a crash worth surfacing rather than
+  # hanging on the survivor.
+  wait "$api_pid" "$console_pid" 2>/dev/null || true
+  stop_pair "$api_pid" "$console_pid"
+}
+
+stop_pair() {
+  trap - INT TERM
+  printf '\n'
+  step "Stopping both"
+  local pid
+  for pid in "$@"; do
+    kill_tree "$pid"
+  done
+  # The two `tail` jobs are the only children left.
+  for pid in $(jobs -p); do
+    kill "$pid" 2>/dev/null || true
+  done
+  ok "Stopped. The database keeps running; stop it with ./run down"
+  exit 0
+}
+
+run_pair_background() {
+  local server_script=$1 console_script=$2
+  mkdir -p "$RUN_STATE"
+
+  DATABASE_URL="$COMPOSE_DB_URL" \
+    nohup npm run --silent "$server_script" >"$RUN_STATE/api.log" 2>&1 &
+  echo $! >"$RUN_STATE/api.pid"
+
+  DATABASE_URL="$COMPOSE_DB_URL" CONSOLE_PORT="$CONSOLE_PORT" \
+    nohup npm run --silent "$console_script" >"$RUN_STATE/console.log" 2>&1 &
+  echo $! >"$RUN_STATE/console.pid"
+
+  wait_for_app
+  wait_for_console
+  note "Logs:  tail -f ${RUN_STATE}/api.log ${RUN_STATE}/console.log"
+  note "Stop:  ./run stop        (the database keeps running; ./run down stops that)"
+}
+
+# ── scenarios ────────────────────────────────────────────────────────────────
+
+# $1 is an optional --bg.
+cmd_dev() {
+  local_prepare
   # dev:server, not dev — `npm run dev` delegates back here and would recurse.
-  DATABASE_URL="$COMPOSE_DB_URL" npm run --silent dev:server
+  if [ "${1:-}" = "--bg" ]; then
+    step "Starting the engine and the console in the background, with reload"
+    run_pair_background dev:server dev:console
+  else
+    step "Starting the engine and the console with reload"
+    note "Engine   http://localhost:${APP_PORT}"
+    note "Console  http://127.0.0.1:${CONSOLE_PORT}   — issue a key here before calling the engine"
+    note "Press Ctrl-C to stop both. The database keeps running; stop it with ./run down"
+    run_pair_foreground dev:server dev:console
+  fi
 }
 
 cmd_debug() {
-  need_docker; need_node; need_deps; need_env
-  step "Starting the database"
-  docker compose up -d db
-  wait_for_db
-  step "Applying migrations"
-  DATABASE_URL="$COMPOSE_DB_URL" npm run --silent migrate
-  step "Starting the engine with an inspector on 9229"
-  note "Attach from VS Code with 'Attach to running server', or open chrome://inspect"
-  DATABASE_URL="$COMPOSE_DB_URL" npm run --silent debug:server
+  local_prepare
+  if [ "${1:-}" = "--bg" ]; then
+    step "Starting both in the background with inspectors on 9229 and 9230"
+    run_pair_background debug:server debug:console
+  else
+    step "Starting both with inspectors — engine on 9229, console on 9230"
+    note "Two ports because two Node processes cannot share one inspector."
+    note "Attach from VS Code, or open chrome://inspect"
+    note "Press Ctrl-C to stop both."
+    run_pair_foreground debug:server debug:console
+  fi
+}
+
+cmd_stop() {
+  local name pidfile pid stopped=0
+  for name in api console; do
+    pidfile="${RUN_STATE}/${name}.pid"
+    [ -f "$pidfile" ] || continue
+    pid=$(cat "$pidfile")
+    if kill -0 "$pid" 2>/dev/null; then
+      step "Stopping ${name} (pid ${pid})"
+      kill_tree "$pid"
+      stopped=1
+    fi
+    rm -f "$pidfile"
+  done
+
+  if [ "$stopped" -eq 1 ]; then
+    ok "Stopped. The database is still running — ./run down stops that."
+  else
+    note "Nothing was running in the background. The Docker stack is stopped with ./run down."
+  fi
 }
 
 cmd_up() {
@@ -208,6 +384,15 @@ cmd_test() {
   need_docker; need_node; need_deps
   note "The suite starts its own throwaway Postgres; the compose database is not used."
   npm run --silent test
+}
+
+cmd_test_ui() {
+  need_docker; need_node; need_deps
+  if [ ! -d "$HOME/Library/Caches/ms-playwright" ] && [ ! -d "$HOME/.cache/ms-playwright" ]; then
+    die "No browser binary for Playwright." "Run: npx playwright install chromium"
+  fi
+  note "The console suite starts its own throwaway Postgres and both apps on ephemeral ports."
+  npm run --silent test:ui
 }
 
 cmd_test_watch() {
@@ -263,8 +448,11 @@ cmd_help() {
 ${BOLD}Usage:${OFF} ./run <scenario>
 
 ${BOLD}Develop${OFF}
-  dev          Database in Docker, engine locally with reload
-  debug        Same as dev, plus a Node inspector on 9229
+  dev          Database in Docker; engine and console locally, with reload
+  dev --bg     The same pair detached, logs in ${RUN_STATE}/
+  debug        The pair with inspectors — engine on 9229, console on 9230
+  debug --bg   The same, detached
+  stop         Stop whatever --bg started (the database keeps running)
   psql         Open a psql shell on the development database
 
 ${BOLD}Run${OFF}
@@ -277,6 +465,7 @@ ${BOLD}Run${OFF}
 ${BOLD}Verify${OFF}
   test         Run the full suite once
   test:watch   Re-run tests on change
+  test:ui      Console tests in a real browser (needs: npx playwright install chromium)
   check        Types, formatting and the full suite
   smoke [name] Replay the test-case suites against a running engine, optionally filtered
 
@@ -289,13 +478,15 @@ EOF
 
 SCENARIO="${1:-help}"
 case "$SCENARIO" in
-  dev)         cmd_dev ;;
-  debug)       cmd_debug ;;
+  dev)         cmd_dev "${2:-}" ;;
+  debug)       cmd_debug "${2:-}" ;;
+  stop)        cmd_stop ;;
   up)          cmd_up ;;
   down)        cmd_down ;;
   reset)       cmd_reset ;;
   test)        cmd_test ;;
   test:watch)  cmd_test_watch ;;
+  test:ui)     cmd_test_ui ;;
   check)       cmd_check ;;
   logs)        cmd_logs "${2:-app}" ;;
   psql)        cmd_psql ;;
