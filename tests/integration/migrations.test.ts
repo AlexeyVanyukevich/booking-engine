@@ -2,15 +2,22 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { sql } from 'kysely'
 import { TIMEZONES } from '../fixtures/resources.js'
 import { validDurations } from '../fixtures/datasets/durations.js'
-import { closeTestDb, getTestDb, resetDb } from './helpers.js'
+import { SCOPES, type Scope } from '../../src/shared/scopes.js'
+import { closeTestDb, getTestDb, resetDb, seedTenantId } from './helpers.js'
 
-beforeEach(resetDb)
+let tenantId: string
+
+beforeEach(async () => {
+  await resetDb()
+  tenantId = await seedTenantId()
+})
 afterAll(closeTestDb)
 
 async function insertResource(overrides: Record<string, unknown> = {}): Promise<string> {
   const row = await getTestDb()
     .insertInto('resources')
     .values({
+      tenant_id: tenantId,
       timezone: TIMEZONES.warsaw,
       slot_duration: 'PT1H',
       concurrency_mode: 'exclusive',
@@ -80,7 +87,13 @@ describe('type round-tripping', () => {
       const resourceId = await insertResource({ timezone: TIMEZONES.auckland })
       await getTestDb()
         .insertInto('schedule_exceptions')
-        .values({ resource_id: resourceId, date, start_time: null, end_time: null })
+        .values({
+          tenant_id: tenantId,
+          resource_id: resourceId,
+          date,
+          start_time: null,
+          end_time: null,
+        })
         .execute()
 
       const row = await getTestDb()
@@ -95,7 +108,13 @@ describe('type round-tripping', () => {
     const resourceId = await insertResource()
     await getTestDb()
       .insertInto('schedule')
-      .values({ resource_id: resourceId, day_of_week: 0, start_time: '09:00', end_time: '17:00' })
+      .values({
+        tenant_id: tenantId,
+        resource_id: resourceId,
+        day_of_week: 0,
+        start_time: '09:00',
+        end_time: '17:00',
+      })
       .execute()
 
     const row = await getTestDb()
@@ -151,14 +170,20 @@ describe('constraints', () => {
     await expect(
       getTestDb()
         .insertInto('schedule')
-        .values({ resource_id: resourceId, ...values })
+        .values({ tenant_id: tenantId, resource_id: resourceId, ...values })
         .execute(),
     ).rejects.toThrow(constraint)
   })
 
   it('rejects a second exception on the same date', async () => {
     const resourceId = await insertResource()
-    const values = { resource_id: resourceId, date: '2026-07-20', start_time: null, end_time: null }
+    const values = {
+      tenant_id: tenantId,
+      resource_id: resourceId,
+      date: '2026-07-20',
+      start_time: null,
+      end_time: null,
+    }
     await getTestDb().insertInto('schedule_exceptions').values(values).execute()
 
     await expect(
@@ -173,7 +198,13 @@ describe('constraints', () => {
     for (const resourceId of [first, second]) {
       await getTestDb()
         .insertInto('schedule_exceptions')
-        .values({ resource_id: resourceId, date: '2026-07-20', start_time: null, end_time: null })
+        .values({
+          tenant_id: tenantId,
+          resource_id: resourceId,
+          date: '2026-07-20',
+          start_time: null,
+          end_time: null,
+        })
         .execute()
     }
 
@@ -193,7 +224,11 @@ describe('constraints', () => {
       await expect(
         getTestDb()
           .insertInto(table)
-          .values({ resource_id: '00000000-0000-0000-0000-000000000000', ...orphan } as never)
+          .values({
+            tenant_id: tenantId,
+            resource_id: '00000000-0000-0000-0000-000000000000',
+            ...orphan,
+          } as never)
           .execute(),
       ).rejects.toThrow(/foreign key|violates/i)
     },
@@ -203,11 +238,23 @@ describe('constraints', () => {
     const resourceId = await insertResource()
     await getTestDb()
       .insertInto('schedule')
-      .values({ resource_id: resourceId, day_of_week: 0, start_time: '09:00', end_time: '17:00' })
+      .values({
+        tenant_id: tenantId,
+        resource_id: resourceId,
+        day_of_week: 0,
+        start_time: '09:00',
+        end_time: '17:00',
+      })
       .execute()
     await getTestDb()
       .insertInto('schedule_exceptions')
-      .values({ resource_id: resourceId, date: '2026-07-20', start_time: null, end_time: null })
+      .values({
+        tenant_id: tenantId,
+        resource_id: resourceId,
+        date: '2026-07-20',
+        start_time: null,
+        end_time: null,
+      })
       .execute()
 
     await getTestDb().deleteFrom('resources').where('id', '=', resourceId).execute()
@@ -251,6 +298,7 @@ describe('002_bookings', () => {
     const resource = await db
       .insertInto('resources')
       .values({
+        tenant_id: tenantId,
         timezone: 'Europe/Warsaw',
         slot_duration: 'PT1H',
         concurrency_mode: 'exclusive',
@@ -259,6 +307,7 @@ describe('002_bookings', () => {
       .executeTakeFirstOrThrow()
 
     const booking = (start: string, end: string) => ({
+      tenant_id: tenantId,
       resource_id: resource.id,
       start_time: start,
       end_time: end,
@@ -286,6 +335,7 @@ describe('002_bookings', () => {
     const resource = await db
       .insertInto('resources')
       .values({
+        tenant_id: tenantId,
         timezone: 'Europe/Warsaw',
         slot_duration: 'PT1H',
         concurrency_mode: 'exclusive',
@@ -297,6 +347,7 @@ describe('002_bookings', () => {
       .insertInto('bookings')
       .values([
         {
+          tenant_id: tenantId,
           resource_id: resource.id,
           start_time: '2026-07-20T09:00:00Z',
           end_time: '2026-07-20T10:00:00Z',
@@ -306,6 +357,7 @@ describe('002_bookings', () => {
           concurrency_mode: 'exclusive',
         },
         {
+          tenant_id: tenantId,
           resource_id: resource.id,
           start_time: '2026-07-20T10:00:00Z',
           end_time: '2026-07-20T11:00:00Z',
@@ -326,6 +378,7 @@ describe('002_bookings', () => {
     const resource = await db
       .insertInto('resources')
       .values({
+        tenant_id: tenantId,
         timezone: 'Europe/Warsaw',
         slot_duration: 'PT1H',
         concurrency_mode: 'shared',
@@ -340,6 +393,7 @@ describe('002_bookings', () => {
       .insertInto('bookings')
       .values([
         {
+          tenant_id: tenantId,
           resource_id: resource.id,
           start_time: '2026-07-20T09:00:00Z',
           end_time: '2026-07-20T10:00:00Z',
@@ -349,6 +403,7 @@ describe('002_bookings', () => {
           concurrency_mode: 'shared',
         },
         {
+          tenant_id: tenantId,
           resource_id: resource.id,
           start_time: '2026-07-20T09:00:00Z',
           end_time: '2026-07-20T10:00:00Z',
@@ -369,6 +424,7 @@ describe('002_bookings', () => {
     const resource = await db
       .insertInto('resources')
       .values({
+        tenant_id: tenantId,
         timezone: 'Europe/Warsaw',
         slot_duration: 'PT1H',
         concurrency_mode: 'exclusive',
@@ -377,6 +433,7 @@ describe('002_bookings', () => {
       .executeTakeFirstOrThrow()
 
     const booking = (customer: string) => ({
+      tenant_id: tenantId,
       resource_id: resource.id,
       start_time: '2026-07-20T09:00:00Z',
       end_time: '2026-07-20T10:00:00Z',
@@ -397,6 +454,7 @@ describe('002_bookings', () => {
     const resource = await db
       .insertInto('resources')
       .values({
+        tenant_id: tenantId,
         timezone: 'UTC',
         slot_duration: 'PT1H',
         concurrency_mode: 'exclusive',
@@ -408,6 +466,7 @@ describe('002_bookings', () => {
       db
         .insertInto('bookings')
         .values({
+          tenant_id: tenantId,
           resource_id: resource.id,
           start_time: '2026-07-20T09:00:00Z',
           end_time: '2026-07-20T10:00:00Z',
@@ -425,6 +484,7 @@ describe('002_bookings', () => {
     const resource = await db
       .insertInto('resources')
       .values({
+        tenant_id: tenantId,
         timezone: 'UTC',
         slot_duration: 'PT1H',
         concurrency_mode: 'exclusive',
@@ -435,6 +495,7 @@ describe('002_bookings', () => {
     await db
       .insertInto('bookings')
       .values({
+        tenant_id: tenantId,
         resource_id: resource.id,
         start_time: '2026-07-20T09:00:00Z',
         end_time: '2026-07-20T10:00:00Z',
@@ -449,4 +510,114 @@ describe('002_bookings', () => {
       db.deleteFrom('resources').where('id', '=', resource.id).execute(),
     ).rejects.toThrow()
   })
+})
+
+describe('tenancy', () => {
+  it.each(['tenants', 'api_keys'])('creates the %s table', async (table) => {
+    const result = await sql<{ count: string }>`
+      select count(*)::text as count from information_schema.tables
+      where table_schema = 'public' and table_name = ${table}
+    `.execute(getTestDb())
+    expect(result.rows[0]!.count).toBe('1')
+  })
+
+  it('puts a non-null tenant_id on all four owned tables', async () => {
+    const columns = await sql<{ table_name: string; is_nullable: string }>`
+      select table_name, is_nullable from information_schema.columns
+      where table_schema = 'public' and column_name = 'tenant_id'
+        and table_name in ('resources', 'schedule', 'schedule_exceptions', 'bookings')
+    `.execute(getTestDb())
+
+    expect(Object.fromEntries(columns.rows.map((r) => [r.table_name, r.is_nullable]))).toEqual({
+      resources: 'NO',
+      schedule: 'NO',
+      schedule_exceptions: 'NO',
+      bookings: 'NO',
+    })
+  })
+
+  it('makes customer_id nullable', async () => {
+    const column = await sql<{ is_nullable: string }>`
+      select is_nullable from information_schema.columns
+      where table_name = 'bookings' and column_name = 'customer_id'
+    `.execute(getTestDb())
+    expect(column.rows[0]?.is_nullable).toBe('YES')
+  })
+
+  // The check constraint and src/shared/scopes.ts are two copies of one list. This is what
+  // fails when they drift.
+  it('permits exactly the scopes the code knows', async () => {
+    const db = getTestDb()
+
+    await expect(
+      db
+        .insertInto('api_keys')
+        .values({
+          tenant_id: tenantId,
+          name: 'all',
+          key_prefix: 'probe001',
+          key_hash: 'x',
+          scopes: [...SCOPES],
+        })
+        .execute(),
+    ).resolves.toBeDefined()
+
+    await expect(
+      db
+        .insertInto('api_keys')
+        .values({
+          tenant_id: tenantId,
+          name: 'bogus',
+          key_prefix: 'probe002',
+          key_hash: 'x',
+          scopes: ['bookings.destroy'] as unknown as Scope[],
+        })
+        .execute(),
+    ).rejects.toThrow()
+  })
+
+  it('refuses a key with no scopes at all', async () => {
+    await expect(
+      getTestDb()
+        .insertInto('api_keys')
+        .values({
+          tenant_id: tenantId,
+          name: 'empty',
+          key_prefix: 'probe003',
+          key_hash: 'x',
+          scopes: [],
+        })
+        .execute(),
+    ).rejects.toThrow()
+  })
+
+  // The guarantee the composite foreign keys exist for.
+  it.each(['schedule', 'schedule_exceptions', 'bookings'] as const)(
+    'refuses a %s row whose tenant disagrees with its resource',
+    async (table) => {
+      const db = getTestDb()
+      const other = await seedTenantId('other')
+      const resourceId = await insertResource()
+
+      const rows: Record<string, Record<string, unknown>> = {
+        schedule: { day_of_week: 0, start_time: '09:00', end_time: '17:00' },
+        schedule_exceptions: { date: '2026-09-01', start_time: null, end_time: null },
+        bookings: {
+          start_time: '2026-09-01T09:00:00Z',
+          end_time: '2026-09-01T10:00:00Z',
+          status: 'confirmed',
+          customer_id: 'c-1',
+          held_until: null,
+          concurrency_mode: 'exclusive',
+        },
+      }
+
+      await expect(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (db.insertInto(table) as any)
+          .values({ tenant_id: other, resource_id: resourceId, ...rows[table] })
+          .execute(),
+      ).rejects.toThrow()
+    },
+  )
 })

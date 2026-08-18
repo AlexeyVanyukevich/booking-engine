@@ -19,6 +19,8 @@ describe('loadConfig', () => {
       maxHoldMinutes: 60,
       holdSweepIntervalSeconds: 60,
       holdSweepEnabled: true,
+      consolePort: 3001,
+      rateLimitPerMinute: 600,
     })
   })
 
@@ -33,6 +35,8 @@ describe('loadConfig', () => {
       maxHoldMinutes: 60,
       holdSweepIntervalSeconds: 60,
       holdSweepEnabled: true,
+      consolePort: 3001,
+      rateLimitPerMinute: 600,
     })
   })
 
@@ -80,4 +84,24 @@ it.each(['yes', '1', 'TRUE', ''])('rejects %s as a boolean flag', (raw) => {
     return
   }
   expect(() => loadConfig({ ...base, HOLD_SWEEP_ENABLED: raw })).toThrow(/HOLD_SWEEP_ENABLED/)
+})
+
+it('defaults the console port and the per-key rate limit', () => {
+  const config = loadConfig(base)
+  expect(config.consolePort).toBe(3001)
+  expect(config.rateLimitPerMinute).toBe(600)
+})
+
+it('reads the console port and the rate limit from the environment', () => {
+  const config = loadConfig({ ...base, CONSOLE_PORT: '4001', RATE_LIMIT_PER_MINUTE: '60' })
+  expect(config.consolePort).toBe(4001)
+  expect(config.rateLimitPerMinute).toBe(60)
+})
+
+it.each([
+  ['CONSOLE_PORT', '0'],
+  ['CONSOLE_PORT', 'nope'],
+  ['RATE_LIMIT_PER_MINUTE', '-1'],
+])('rejects %s=%s', (key, value) => {
+  expect(() => loadConfig({ ...base, [key]: value })).toThrow(new RegExp(key))
 })

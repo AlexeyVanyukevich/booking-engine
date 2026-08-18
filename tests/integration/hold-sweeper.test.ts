@@ -1,9 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { sql } from 'kysely'
 import { SWEEP_LOCK_KEY, sweepExpiredHolds } from '../../src/modules/bookings/hold-sweeper.js'
-import { closeTestDb, getTestDb, resetDb } from './helpers.js'
+import { closeTestDb, getTestDb, resetDb, seedTenantId } from './helpers.js'
 
-beforeEach(resetDb)
+let tenantId: string
+
+beforeEach(async () => {
+  await resetDb()
+  tenantId = await seedTenantId()
+})
 afterAll(closeTestDb)
 
 /** A resource and one hold, whose expiry is placed relative to the database's clock. */
@@ -12,6 +17,7 @@ async function aHold(expiresInSeconds: number): Promise<string> {
   const resource = await db
     .insertInto('resources')
     .values({
+      tenant_id: tenantId,
       timezone: 'Europe/Warsaw',
       slot_duration: sql`interval 'PT1H'`,
       concurrency_mode: 'exclusive',
@@ -22,6 +28,7 @@ async function aHold(expiresInSeconds: number): Promise<string> {
   const booking = await db
     .insertInto('bookings')
     .values({
+      tenant_id: tenantId,
       resource_id: resource.id,
       start_time: '2026-07-20T09:00:00Z',
       end_time: '2026-07-20T10:00:00Z',
