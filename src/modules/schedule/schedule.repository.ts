@@ -14,10 +14,11 @@ const columns = ['id', 'day_of_week', 'start_time', 'end_time'] as const
 export class ScheduleRepository {
   constructor(private readonly db: Kysely<Database>) {}
 
-  async listByResource(resourceId: string): Promise<ScheduleRow[]> {
+  async listByResource(tenantId: string, resourceId: string): Promise<ScheduleRow[]> {
     return this.db
       .selectFrom('schedule')
       .select(columns)
+      .where('tenant_id', '=', tenantId)
       .where('resource_id', '=', resourceId)
       .orderBy('day_of_week')
       .orderBy('start_time')
@@ -28,9 +29,17 @@ export class ScheduleRepository {
    * Delete-then-insert in one transaction. Validation runs before this is called, so a
    * rejected submission never reaches the database and the old schedule survives intact.
    */
-  async replaceForResource(resourceId: string, rules: ScheduleRuleInput[]): Promise<ScheduleRow[]> {
+  async replaceForResource(
+    tenantId: string,
+    resourceId: string,
+    rules: ScheduleRuleInput[],
+  ): Promise<ScheduleRow[]> {
     return this.db.transaction().execute(async (trx) => {
-      await trx.deleteFrom('schedule').where('resource_id', '=', resourceId).execute()
+      await trx
+        .deleteFrom('schedule')
+        .where('tenant_id', '=', tenantId)
+        .where('resource_id', '=', resourceId)
+        .execute()
 
       if (rules.length === 0) return []
 
@@ -38,6 +47,7 @@ export class ScheduleRepository {
         .insertInto('schedule')
         .values(
           rules.map((rule) => ({
+            tenant_id: tenantId,
             resource_id: resourceId,
             day_of_week: rule.day_of_week,
             start_time: rule.start_time,

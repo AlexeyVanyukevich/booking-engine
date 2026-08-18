@@ -1,27 +1,37 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { sql } from 'kysely'
 import { Api } from '../fixtures/api.js'
-import { injectTransport, type TransportResponse } from '../fixtures/transport.js'
+import {
+  withAuthorization,
+  injectTransport,
+  type TransportResponse,
+} from '../fixtures/transport.js'
 import { unknownUuid } from '../fixtures/ids.js'
 import { aResource, aSharedResource, type ResourcePayload } from '../fixtures/resources.js'
 import { WEEKDAYS, aWindow, everyDay, wholeDaysOn } from '../fixtures/schedules.js'
 import { rejectedBookings } from '../fixtures/datasets/booking-validation.js'
 import { bookingTransitions, type StartingState } from '../fixtures/datasets/booking-transitions.js'
 import type { Trx } from '../../src/modules/bookings/booking.repository.js'
-import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
+import {
+  buildTestApp,
+  closeTestDb,
+  getTestDb,
+  resetDbWithTenant,
+  testAuthorization,
+} from './helpers.js'
 
 let api: Api
 let close: () => Promise<void>
 
 beforeAll(async () => {
   const app = await buildTestApp()
-  api = new Api(injectTransport(app))
+  api = new Api(withAuthorization(injectTransport(app), testAuthorization))
   close = async () => {
     await app.close()
   }
 })
 
-beforeEach(resetDb)
+beforeEach(resetDbWithTenant)
 
 afterAll(async () => {
   await close()
@@ -1101,9 +1111,12 @@ describe('listings', () => {
     expect(response.json()).toHaveLength(2)
   })
 
-  it('requires customer_id on the customer listing', async () => {
+  // Once required, because the query would otherwise be bounded only by the date window
+  // across every resource in the system. Under a tenant filter it is bounded by the tenant
+  // and the window, so the requirement bought nothing and cost the owner's calendar.
+  it('no longer requires customer_id on the customer listing', async () => {
     const response = await api.listCustomerBookings('?from=2026-07-20&to=2026-07-21')
-    expect(response.statusCode).toBe(400)
+    expect(response.statusCode).toBe(200)
   })
 
   it.each([
@@ -1153,5 +1166,90 @@ describe('listings', () => {
       .json()
       .map((booking: { start_time: string }) => booking.start_time.slice(-6))
     expect(new Set(offsets)).toEqual(new Set(['+02:00', '+12:00']))
+  })
+})
+
+describe('a booking without a customer', () => {
+  const slot = { start_time: at('09'), end_time: at('10') }
+
+  it('is accepted and reports customer_id as null', async () => {
+    const id = await anHourlyResource()
+    const response = await api.createBooking(id, slot)
+
+    expect(response.statusCode).toBe(201)
+    // Present and null, not absent: a caller reading the field should not have to tell
+    // "no customer" from "field missing from this version of the API".
+    expect(response.json()).toHaveProperty('customer_id', null)
+  })
+
+  it('is invisible to a customer filter', async () => {
+    const id = await anHourlyResource()
+    await api.givenBooking(id, slot)
+
+    const response = await api.listCustomerBookings(
+      '?customer_id=c-1&from=2026-07-20&to=2026-07-21',
+    )
+    expect(response.json()).toEqual([])
+  })
+
+  it('still appears in the tenant-wide listing', async () => {
+    const id = await anHourlyResource()
+    await api.givenBooking(id, slot)
+
+    const response = await api.listCustomerBookings('?from=2026-07-20&to=2026-07-21')
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toHaveLength(1)
+    expect(response.json()[0].customer_id).toBeNull()
+  })
+
+  it('and the resource listing too', async () => {
+    const id = await anHourlyResource()
+    await api.givenBooking(id, slot)
+
+    const response = await api.listResourceBookings(id, '?from=2026-07-20&to=2026-07-21')
+    expect(response.json()).toHaveLength(1)
+  })
+
+  it('does not exempt the tenant-wide listing from the range bound', async () => {
+    const response = await api.listCustomerBookings('?from=2026-01-01&to=2028-01-01')
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('invalid_range')
+  })
+
+  it('still refuses a blank customer_id when one is sent', async () => {
+    const id = await anHourlyResource()
+    const response = await api.createBooking(id, { customer_id: '', ...slot })
+    expect(response.statusCode).toBe(400)
+  })
+})
+
+describe('idempotency across a null customer', () => {
+  const slot = { start_time: at('09'), end_time: at('10') }
+
+  it('replays when the original and the retry both omit the customer', async () => {
+    const id = await anHourlyResource()
+    const body = { ...slot, idempotency_key: 'k1' }
+
+    const first = await api.createBooking(id, body)
+    const second = await api.createBooking(id, body)
+
+    expect(first.statusCode).toBe(201)
+    expect(second.statusCode).toBe(200)
+    expect(second.json().id).toBe(first.json().id)
+  })
+
+  // `undefined` and `null` must not read as two different customers, and a customer that
+  // appears or disappears describes a different booking under the same key.
+  it.each([
+    ['adds a customer the original did not have', {}, { customer_id: 'c-1' }],
+    ['drops the customer the original had', { customer_id: 'c-1' }, {}],
+    ['changes the customer', { customer_id: 'c-1' }, { customer_id: 'c-2' }],
+  ])('refuses a replay that %s', async (_name, original, retry) => {
+    const id = await anHourlyResource()
+    await api.givenBooking(id, { ...slot, ...original, idempotency_key: 'k2' })
+
+    const response = await api.createBooking(id, { ...slot, ...retry, idempotency_key: 'k2' })
+    expect(response.statusCode).toBe(409)
+    expect(response.json().error).toBe('idempotency_key_reused')
   })
 })

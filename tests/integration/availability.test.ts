@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { sql } from 'kysely'
 import { Api } from '../fixtures/api.js'
-import { injectTransport } from '../fixtures/transport.js'
+import { withAuthorization, injectTransport } from '../fixtures/transport.js'
 import { unknownUuid } from '../fixtures/ids.js'
 import { aResource, aSharedResource } from '../fixtures/resources.js'
 import { WEEKDAYS, aWindow, everyDay, windowsOn } from '../fixtures/schedules.js'
@@ -9,20 +9,26 @@ import {
   availabilityScenarios,
   type AvailabilityScenario,
 } from '../fixtures/datasets/availability-scenarios.js'
-import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
+import {
+  buildTestApp,
+  closeTestDb,
+  getTestDb,
+  resetDbWithTenant,
+  testAuthorization,
+} from './helpers.js'
 
 let api: Api
 let close: () => Promise<void>
 
 beforeAll(async () => {
   const app = await buildTestApp()
-  api = new Api(injectTransport(app))
+  api = new Api(withAuthorization(injectTransport(app), testAuthorization))
   close = async () => {
     await app.close()
   }
 })
 
-beforeEach(resetDb)
+beforeEach(resetDbWithTenant)
 
 afterAll(async () => {
   await close()

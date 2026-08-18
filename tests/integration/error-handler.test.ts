@@ -1,35 +1,50 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { Api } from '../fixtures/api.js'
-import { injectTransport } from '../fixtures/transport.js'
+import { withAuthorization, injectTransport } from '../fixtures/transport.js'
 import { unknownUuid } from '../fixtures/ids.js'
 import { aResource } from '../fixtures/resources.js'
-import { buildTestApp, closeTestDb, resetDb } from './helpers.js'
+import { buildTestApp, closeTestDb, resetDbWithTenant, testAuthorization } from './helpers.js'
 
 let app: FastifyInstance
 let api: Api
 
 beforeAll(async () => {
   app = await buildTestApp()
-  api = new Api(injectTransport(app))
+  api = new Api(withAuthorization(injectTransport(app), testAuthorization))
 })
 
-beforeEach(resetDb)
+beforeEach(resetDbWithTenant)
 
 afterAll(async () => {
   await app.close()
   await closeTestDb()
 })
 
+const unmatched = [
+  { name: 'an unknown path', method: 'GET' as const, url: '/nope' },
+  { name: 'an unknown nested path', method: 'GET' as const, url: '/resources/x/y/z' },
+  { name: 'a method the route does not serve', method: 'DELETE' as const, url: '/health' },
+]
+
 describe('error responses', () => {
-  it.each([
-    { name: 'an unknown path', method: 'GET' as const, url: '/nope' },
-    { name: 'an unknown nested path', method: 'GET' as const, url: '/resources/x/y/z' },
-    { name: 'a method the route does not serve', method: 'DELETE' as const, url: '/health' },
-  ])('answers $name with the uniform 404 shape', async ({ method, url }) => {
-    const response = await app.inject({ method, url })
+  it.each(unmatched)('answers $name with the uniform 404 shape', async ({ method, url }) => {
+    const response = await api.request({ method, url })
     expect(response.statusCode).toBe(404)
     expect(response.json()).toEqual({ error: 'not_found', message: 'Route not found' })
+  })
+
+  /**
+   * Authentication runs in `onRequest`, before Fastify has decided there is no route, so an
+   * unknown path answers 401 rather than 404 to a caller with no key. That is the better
+   * answer: without it, anyone could map which paths exist by reading status codes. With a
+   * valid key the uniform 404 above is what comes back, so nothing is hidden from a caller
+   * entitled to know.
+   */
+  it.each(unmatched)('answers $name with 401 when no key is presented', async ({ method, url }) => {
+    const response = await app.inject({ method, url })
+    expect(response.statusCode).toBe(401)
+    expect(response.json().error).toBe('unauthorized')
   })
 
   it.each([

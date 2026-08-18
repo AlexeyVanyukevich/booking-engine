@@ -13,12 +13,25 @@ import type { Transport } from './transport.js'
 export class Api {
   constructor(private readonly send: Transport) {}
 
+  /**
+   * An escape hatch for cases that are about the transport rather than about an endpoint —
+   * an unmatched path, a method a route does not serve. It still goes through the transport,
+   * so it carries the same credentials as every other call.
+   */
+  request(request: Parameters<Transport>[0]) {
+    return this.send(request)
+  }
+
   createResource(payload: ResourcePayload | Record<string, unknown>) {
     return this.send({ method: 'POST', url: '/resources', payload })
   }
 
   getResource(id: string) {
     return this.send({ method: 'GET', url: `/resources/${id}` })
+  }
+
+  listResources(query = '') {
+    return this.send({ method: 'GET', url: `/resources${query === '' ? '' : `?${query}`}` })
   }
 
   patchResource(id: string, payload: Record<string, unknown>) {

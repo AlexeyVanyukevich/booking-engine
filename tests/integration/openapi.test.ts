@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
-import { buildTestApp, closeTestDb } from './helpers.js'
+import { buildTestApp, closeTestDb, resetDbWithTenant, testAuthorization } from './helpers.js'
 
 let app: FastifyInstance
 let document: {
@@ -24,6 +24,7 @@ afterAll(async () => {
 const ROUTES: Array<[method: string, path: string]> = [
   ['get', '/health'],
   ['post', '/resources'],
+  ['get', '/resources'],
   ['get', '/resources/{id}'],
   ['patch', '/resources/{id}'],
   ['delete', '/resources/{id}'],
@@ -96,7 +97,14 @@ describe('OpenAPI document', () => {
         .map(([name, field]) => [name, field.example]),
     )
 
-    const response = await app.inject({ method: 'POST', url: '/resources', payload: prefilled })
+    // The documented body has to work against the real route, which now needs a key.
+    await resetDbWithTenant()
+    const response = await app.inject({
+      method: 'POST',
+      url: '/resources',
+      headers: { authorization: testAuthorization()! },
+      payload: prefilled,
+    })
     expect(response.statusCode).toBe(201)
   })
 

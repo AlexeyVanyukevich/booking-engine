@@ -102,16 +102,20 @@ export class ScheduleService {
     private readonly resources: ResourceService,
   ) {}
 
-  async list(resourceId: string): Promise<ScheduleRuleResponse[]> {
-    await this.resources.loadOrFail(resourceId)
-    const rows = await this.repository.listByResource(resourceId)
+  async list(tenantId: string, resourceId: string): Promise<ScheduleRuleResponse[]> {
+    await this.resources.loadOrFail(tenantId, resourceId)
+    const rows = await this.repository.listByResource(tenantId, resourceId)
     return rows.map(toScheduleResponse)
   }
 
-  async replace(resourceId: string, rules: ScheduleRuleInput[]): Promise<ScheduleRuleResponse[]> {
-    const resource = await this.resources.loadOrFail(resourceId)
+  async replace(
+    tenantId: string,
+    resourceId: string,
+    rules: ScheduleRuleInput[],
+  ): Promise<ScheduleRuleResponse[]> {
+    const resource = await this.resources.loadOrFail(tenantId, resourceId)
     validateScheduleSet(rules, parseSlotDuration(resource.slot_duration))
-    const rows = await this.repository.replaceForResource(resourceId, rules)
+    const rows = await this.repository.replaceForResource(tenantId, resourceId, rules)
     return rows.map(toScheduleResponse)
   }
 }

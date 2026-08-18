@@ -85,8 +85,19 @@ same script, so both habits are fine.
 
 ```bash
 ./run up          # everything in Docker, http://localhost:3000
+```
+
+Every request needs an API key, so make one. Open the console at
+**http://127.0.0.1:3001**, create a tenant, issue a key with the **Back office** preset, and
+copy it — it is shown once:
+
+```bash
+export BOOKING_KEY=bk_live_...
 ./run smoke       # prove it works end to end
 ```
+
+`./run smoke` creates its own throwaway tenant and key through the console, so it needs the
+console running but not `BOOKING_KEY`.
 
 or, to work on the code:
 
@@ -98,13 +109,55 @@ The compose database is published on host port **5433**, not 5432, so a Postgres
 have installed locally keeps working alongside it. Override `PORT`, `LOG_LEVEL` or
 `MAX_RANGE_DAYS` from your shell or `.env`.
 
+### The console
+
+The console issues, lists and revokes API keys, and it **has no authentication of its own**. It
+is therefore bound to `127.0.0.1` and published in compose as `127.0.0.1:3001:3001`. That bind
+address is hard-coded, not configurable: reaching this port is reaching the ability to mint an
+all-scopes key for any tenant in the database. Do not put it behind a public reverse proxy, and
+do not change the mapping to `0.0.0.0`.
+
+A key is shown exactly once, when it is issued. Losing it means issuing another and revoking
+the first; revocation keeps the row, so the audit trail survives.
+
+The presets answer the question "what is this key for":
+
+| Preset          | For                                                                 |
+| --------------- | ------------------------------------------------------------------- |
+| Widget          | A calendar that only shows free slots                               |
+| Site backend    | The owner's own backend: book, read, and list the calendar          |
+| Partner channel | A reseller that may book but must **not** read the owner's calendar |
+| Reporting       | Read-only across everything, including the calendar                 |
+| Back office     | Everything                                                          |
+
+Presets are expanded at issue time and the name is not stored, so editing a preset later
+cannot change a key already in the field.
+
+## Running both planes locally
+
+`./run dev` starts the engine **and** the console together, each reloading on save, with their
+output labelled `[api]` and `[console]` in one terminal. Ctrl-C stops the pair. They come as a
+pair because the engine refuses every request without a key and the console is the only place
+to issue one — starting either alone leaves you unable to use either.
+
+```bash
+./run dev            # both, in this terminal
+./run dev --bg       # both, detached; logs in .run/, stop with ./run stop
+./run stop           # stops what --bg started; the database keeps running
+```
+
+Detached mode writes `.run/api.log` and `.run/console.log` and records each PID beside them,
+so `./run stop` can walk the process tree — `npm` and `tsx watch` each fork, and killing only
+the launcher would orphan the process actually holding the port.
+
 ## Debugging
 
 ```bash
-./run debug
+./run debug          # both, inspectors on 9229 (engine) and 9230 (console)
+./run debug --bg     # the same, detached
 ```
 
-Same as `./run dev`, plus a Node inspector on `127.0.0.1:9229`. Attach from VS Code with the
+Two inspector ports because two Node processes cannot share one. Attach from VS Code with the
 **Attach to running server** configuration, or open `chrome://inspect` in a Chromium browser.
 
 Four launch configurations are checked in at [.vscode/launch.json](.vscode/launch.json):
@@ -168,6 +221,8 @@ Beyond the scenarios above, these do one thing each and are what `./run` calls i
 | `npm run migrate`       | Apply migrations from the TypeScript sources              |
 | `npm run migrate:built` | Apply migrations from `dist/`, used inside the container  |
 | `npm run dev:server`    | Start the engine alone, assuming a database is already up |
+| `npm run dev:console`   | Start the console alone, same assumption                  |
+| `npm run debug:console` | The console with an inspector on 9230                     |
 | `npm run debug:server`  | The same with an inspector                                |
 | `npm run worker`        | Run the hold-sweep worker alone, looping                  |
 | `npm run format`        | Format with Prettier                                      |
@@ -176,6 +231,11 @@ The test suite starts its own throwaway Postgres container and ignores the compo
 so tests need Docker running but no database prepared.
 
 ## API
+
+Every request outside `/health`, `/` and `/docs` carries `Authorization: Bearer bk_live_...`.
+A key belongs to one tenant and sees only that tenant's rows — another tenant's id answers
+`404`, never `403`. Which routes each scope opens is in
+[conventions.md](docs/conventions.md#authentication-and-scopes).
 
 **For manual testing, use the interactive reference at `/docs`** — `./run docs` opens it, and
 the root path redirects there. Every endpoint has a **Try it out** button that sends a real request
@@ -195,6 +255,7 @@ The endpoints at a glance:
 | ------ | --------------------------------------- | ------------------------------------------------------------------- |
 | GET    | `/health`                               | Liveness                                                            |
 | POST   | `/resources`                            | Create a resource                                                   |
+| GET    | `/resources`                            | List the tenant's resources                                         |
 | GET    | `/resources/:id`                        | Read a resource                                                     |
 | PATCH  | `/resources/:id`                        | Update `slot_duration`, `slot_anchor_time`, `capacity`, `is_active` |
 | DELETE | `/resources/:id`                        | Delete a resource, its schedule and its exceptions                  |
@@ -230,7 +291,9 @@ Full reference: [docs/conventions.md](docs/conventions.md). The four that catch 
 
 ```bash
 # Nightly, and the day starts at 14:00 rather than midnight
-ID=$(curl -s -X POST localhost:3000/resources -H 'content-type: application/json' -d '{
+AUTH="authorization: Bearer $BOOKING_KEY"
+
+ID=$(curl -s -X POST localhost:3000/resources -H "$AUTH" -H 'content-type: application/json' -d '{
   "timezone": "Europe/Warsaw",
   "slot_duration": "P1D",
   "slot_anchor_time": "14:00",
@@ -238,7 +301,7 @@ ID=$(curl -s -X POST localhost:3000/resources -H 'content-type: application/json
 }' | sed -E 's/.*"id":"([^"]+)".*/\1/')
 
 # Bookable every day of the week
-curl -s -X PUT localhost:3000/resources/$ID/schedule -H 'content-type: application/json' -d '[
+curl -s -X PUT localhost:3000/resources/$ID/schedule -H "$AUTH" -H 'content-type: application/json' -d '[
   {"day_of_week":0,"start_time":null,"end_time":null},
   {"day_of_week":1,"start_time":null,"end_time":null},
   {"day_of_week":2,"start_time":null,"end_time":null},
@@ -248,7 +311,7 @@ curl -s -X PUT localhost:3000/resources/$ID/schedule -H 'content-type: applicati
   {"day_of_week":6,"start_time":null,"end_time":null}
 ]'
 
-curl -s "localhost:3000/resources/$ID/availability?from=2026-07-20&to=2026-07-23"
+curl -s -H "$AUTH" "localhost:3000/resources/$ID/availability?from=2026-07-20&to=2026-07-23"
 ```
 
 Three slots come back, each running 14:00 to 14:00 the next day. Asking across the spring

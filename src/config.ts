@@ -7,6 +7,8 @@ export interface Config {
   maxHoldMinutes: number
   holdSweepIntervalSeconds: number
   holdSweepEnabled: boolean
+  consolePort: number
+  rateLimitPerMinute: number
 }
 
 function requireString(env: NodeJS.ProcessEnv, key: string): string {
@@ -46,5 +48,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     maxHoldMinutes: positiveInt(env, 'MAX_HOLD_MINUTES', 60),
     holdSweepIntervalSeconds: positiveInt(env, 'HOLD_SWEEP_INTERVAL_SECONDS', 60),
     holdSweepEnabled: booleanFlag(env, 'HOLD_SWEEP_ENABLED', true),
+    // There is deliberately no CONSOLE_HOST. The console issues keys without authentication,
+    // which is safe only while it is unreachable from outside, so the bind address is
+    // hard-coded to 127.0.0.1 in src/console.ts rather than left to a deployment to get wrong.
+    consolePort: positiveInt(env, 'CONSOLE_PORT', 3001),
+    rateLimitPerMinute: positiveInt(env, 'RATE_LIMIT_PER_MINUTE', 600),
   }
 }

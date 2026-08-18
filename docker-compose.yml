@@ -39,6 +39,7 @@ services:
       MAX_HOLD_MINUTES: ${MAX_HOLD_MINUTES:-60}
       HOLD_SWEEP_INTERVAL_SECONDS: ${HOLD_SWEEP_INTERVAL_SECONDS:-60}
       HOLD_SWEEP_ENABLED: ${HOLD_SWEEP_ENABLED:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-600}
     ports:
       - '${PORT:-3000}:3000'
     depends_on:
@@ -58,6 +59,26 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    restart: unless-stopped
+
+  # The key console. Note the host part of the port mapping: `127.0.0.1:3001:3001`, not
+  # `3001:3001`. The console issues keys without authenticating anyone, which is safe only
+  # while it is unreachable from outside this machine. Publishing it on 0.0.0.0 would hand
+  # anyone who finds the port the ability to mint an all-scopes key for any tenant.
+  console:
+    build: .
+    command: ['node', 'dist/src/console.js']
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/booking_engine
+      CONSOLE_PORT: '3001'
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - '127.0.0.1:${CONSOLE_PORT:-3001}:3001'
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # The same image as `app`, run as a sweeper. Optional: the API processes sweep on their own

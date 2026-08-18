@@ -21,6 +21,7 @@ export const availabilityRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get(
     '/resources/:id/availability',
     {
+      config: { scope: 'availability.read' },
       schema: {
         tags: ['Availability'],
         summary: 'Compute the slots a resource offers in a date range',
@@ -41,6 +42,11 @@ export const availabilityRoutes: FastifyPluginAsyncTypebox = async (app) => {
       },
     },
     async (request) =>
-      service.getAvailability(request.params.id, request.query.from, request.query.to),
+      service.getAvailability(
+        request.tenantId,
+        request.params.id,
+        request.query.from,
+        request.query.to,
+      ),
   )
 }

@@ -24,6 +24,7 @@ export const exceptionRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get(
     '/resources/:id/exceptions',
     {
+      config: { scope: 'schedule.read' },
       schema: {
         tags: ['Exceptions'],
         summary: 'List exceptions in a date range',
@@ -34,12 +35,14 @@ export const exceptionRoutes: FastifyPluginAsyncTypebox = async (app) => {
         response: { 200: ExceptionListResponse, 400: ErrorResponse, 404: ErrorResponse },
       },
     },
-    async (request) => service.list(request.params.id, request.query.from, request.query.to),
+    async (request) =>
+      service.list(request.tenantId, request.params.id, request.query.from, request.query.to),
   )
 
   app.put(
     '/resources/:id/exceptions/:date',
     {
+      config: { scope: 'schedule.write' },
       schema: {
         tags: ['Exceptions'],
         summary: 'Create or overwrite the exception for a date',
@@ -53,12 +56,14 @@ export const exceptionRoutes: FastifyPluginAsyncTypebox = async (app) => {
         response: { 200: ExceptionResponse, 400: ErrorResponse, 404: ErrorResponse },
       },
     },
-    async (request) => service.put(request.params.id, request.params.date, request.body),
+    async (request) =>
+      service.put(request.tenantId, request.params.id, request.params.date, request.body),
   )
 
   app.delete(
     '/resources/:id/exceptions/:date',
     {
+      config: { scope: 'schedule.write' },
       schema: {
         tags: ['Exceptions'],
         summary: 'Remove the exception for a date',
@@ -69,7 +74,7 @@ export const exceptionRoutes: FastifyPluginAsyncTypebox = async (app) => {
       },
     },
     async (request, reply) => {
-      await service.delete(request.params.id, request.params.date)
+      await service.delete(request.tenantId, request.params.id, request.params.date)
       return reply.status(204).send(null)
     },
   )

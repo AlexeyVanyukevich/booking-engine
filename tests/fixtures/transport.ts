@@ -30,6 +30,26 @@ export function injectTransport(app: Injectable): Transport {
   return (request) => app.inject(request)
 }
 
+/**
+ * Adds `Authorization` to every request that does not already carry one.
+ *
+ * The header is fetched per request rather than captured once, because the key is reissued
+ * after each truncation — a value captured at construction would name a tenant that no longer
+ * exists. A request that sets its own header wins, so a case can still probe a wrong key.
+ */
+export function withAuthorization(
+  transport: Transport,
+  header: () => string | undefined,
+): Transport {
+  return (request) => {
+    const authorization = header()
+    if (authorization === undefined || request.headers?.authorization !== undefined) {
+      return transport(request)
+    }
+    return transport({ ...request, headers: { authorization, ...request.headers } })
+  }
+}
+
 export function httpTransport(baseUrl: string): Transport {
   return async ({ method, url, payload, headers }) => {
     const sendsBody = payload !== undefined

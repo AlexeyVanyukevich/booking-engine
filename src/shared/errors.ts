@@ -44,6 +44,30 @@ export class NotFoundError extends AppError {
   readonly code = 'not_found'
 }
 
+/**
+ * Every authentication failure answers this, whatever went wrong: no header, a malformed key,
+ * an unknown prefix, a wrong secret, a revoked key, an inactive tenant. A caller learns that
+ * the key did not work and never which step rejected it — distinguishing "no such key" from
+ * "wrong secret" would turn prefix enumeration into a usable probe.
+ */
+export class UnauthorizedError extends AppError {
+  readonly statusCode = 401
+  readonly code = 'unauthorized'
+  readonly headers = { 'www-authenticate': 'Bearer' }
+}
+
+/** A valid key that does not hold the scope the route requires. `details` names it. */
+export class ForbiddenScopeError extends AppError {
+  readonly statusCode = 403
+  readonly code = 'forbidden_scope'
+}
+
+/** A console write whose `Origin` is not the console itself. */
+export class ForbiddenOriginError extends AppError {
+  readonly statusCode = 403
+  readonly code = 'forbidden_origin'
+}
+
 export class InvalidIntervalError extends AppError {
   readonly statusCode = 400
   readonly code = 'invalid_interval'

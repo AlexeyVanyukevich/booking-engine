@@ -5,6 +5,8 @@ import { ResourceRepository } from './resource.repository.js'
 import {
   CreateResourceBody,
   ErrorResponse,
+  ResourceListQuery,
+  ResourceListResponse,
   ResourceParams,
   ResourceResponse,
   UpdateResourceBody,
@@ -17,6 +19,7 @@ export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.post(
     '/resources',
     {
+      config: { scope: 'resources.write' },
       schema: {
         tags: ['Resources'],
         summary: 'Create a resource',
@@ -30,12 +33,32 @@ export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
         response: { 201: ResourceResponse, 400: ErrorResponse },
       },
     },
-    async (request, reply) => reply.status(201).send(await service.create(request.body)),
+    async (request, reply) =>
+      reply.status(201).send(await service.create(request.tenantId, request.body)),
+  )
+
+  app.get(
+    '/resources',
+    {
+      config: { scope: 'resources.read' },
+      schema: {
+        tags: ['Resources'],
+        summary: 'List resources',
+        description: md(
+          "Every resource this key's tenant owns, oldest first.",
+          'A caller that keeps its own records already knows its ids, so this is not how it finds them. It exists for the console and for reconciling the two sets when they disagree.',
+        ),
+        querystring: ResourceListQuery,
+        response: { 200: ResourceListResponse, 400: ErrorResponse },
+      },
+    },
+    async (request) => service.list(request.tenantId, request.query),
   )
 
   app.get(
     '/resources/:id',
     {
+      config: { scope: 'resources.read' },
       schema: {
         tags: ['Resources'],
         summary: 'Read a resource',
@@ -43,12 +66,13 @@ export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
         response: { 200: ResourceResponse, 404: ErrorResponse },
       },
     },
-    async (request) => service.getById(request.params.id),
+    async (request) => service.getById(request.tenantId, request.params.id),
   )
 
   app.patch(
     '/resources/:id',
     {
+      config: { scope: 'resources.write' },
       schema: {
         tags: ['Resources'],
         summary: 'Update the mutable fields of a resource',
@@ -62,12 +86,13 @@ export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
         response: { 200: ResourceResponse, 400: ErrorResponse, 404: ErrorResponse },
       },
     },
-    async (request) => service.update(request.params.id, request.body),
+    async (request) => service.update(request.tenantId, request.params.id, request.body),
   )
 
   app.delete(
     '/resources/:id',
     {
+      config: { scope: 'resources.write' },
       schema: {
         tags: ['Resources'],
         summary: 'Delete a resource',
@@ -85,7 +110,7 @@ export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
       },
     },
     async (request, reply) => {
-      await service.delete(request.params.id)
+      await service.delete(request.tenantId, request.params.id)
       return reply.status(204).send(null)
     },
   )

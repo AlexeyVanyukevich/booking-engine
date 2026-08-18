@@ -142,7 +142,8 @@ function capacityIsCounted(mode: ConcurrencyMode): boolean {
 function isMissingResource(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false
   const candidate = error as { code?: unknown; constraint?: unknown }
-  return candidate.code === '23503' && candidate.constraint === 'bookings_resource_id_fkey'
+  // Migration 003 replaced the single-column key with the composite `bookings_resource_fk`.
+  return candidate.code === '23503' && candidate.constraint === 'bookings_resource_fk'
 }
 
 /**
@@ -164,8 +165,12 @@ export class BookingService {
     private readonly options: BookingOptions,
   ) {}
 
-  async create(resourceId: string, body: CreateBookingBody): Promise<CreateResult> {
-    const resource = await this.resources.loadOrFail(resourceId)
+  async create(
+    tenantId: string,
+    resourceId: string,
+    body: CreateBookingBody,
+  ): Promise<CreateResult> {
+    const resource = await this.resources.loadOrFail(tenantId, resourceId)
 
     const { start, end, slots } = await this.validateTarget(
       resource,
@@ -189,9 +194,9 @@ export class BookingService {
     const countsCapacity = capacityIsCounted(resource.concurrency_mode)
     const needsLock = countsCapacity || key !== null
 
-    const outcome = await this.inWrite(resource.id, needsLock, async (trx, current) => {
+    const outcome = await this.inWrite(tenantId, resource.id, needsLock, async (trx, current) => {
       if (key !== null) {
-        const existing = await this.bookings.findByIdempotencyKey(trx, resource.id, key)
+        const existing = await this.bookings.findByIdempotencyKey(trx, tenantId, resource.id, key)
         if (existing) return { row: this.sameOrFail(existing, body, start, end), created: false }
       }
 
@@ -211,11 +216,14 @@ export class BookingService {
       }
 
       const values = {
+        tenant_id: tenantId,
         resource_id: resource.id,
         start_time: start,
         end_time: end,
         status: (holdMinutes === null ? 'confirmed' : 'held') as 'confirmed' | 'held',
-        customer_id: body.customer_id,
+        // Normalised once, here: `undefined` and `null` must not read as different customers
+        // to the idempotency comparison in `sameOrFail`.
+        customer_id: body.customer_id ?? null,
         concurrency_mode: resource.concurrency_mode,
         held_until: holdMinutes === null ? null : holdExpiry(holdMinutes),
         idempotency_key: key,
@@ -231,7 +239,7 @@ export class BookingService {
 
         // A concurrent request claimed the key between the lookup and the insert. The
         // unique index closed the race; re-read and apply the same comparison.
-        const raced = await this.bookings.findByIdempotencyKey(trx, resource.id, key)
+        const raced = await this.bookings.findByIdempotencyKey(trx, tenantId, resource.id, key)
         if (!raced) throw new Error(`Idempotency key ${key} conflicted but no row was found`)
         return { row: this.sameOrFail(raced, body, start, end), created: false }
       } catch (error) {
@@ -267,7 +275,7 @@ export class BookingService {
     end: Date,
   ): BookingRow {
     const matches =
-      existing.customer_id === body.customer_id &&
+      existing.customer_id === (body.customer_id ?? null) &&
       existing.start_time.getTime() === start.getTime() &&
       existing.end_time.getTime() === end.getTime()
 
@@ -286,12 +294,13 @@ export class BookingService {
    * before that body and is one of the two statements that can deadlock.
    */
   private async inWrite<T>(
+    tenantId: string,
     resourceId: string,
     lockResource: boolean,
     work: (trx: Trx, resource: ResourceRow | undefined) => Promise<T>,
   ): Promise<T> {
     try {
-      return await this.bookings.inWriteTransaction(resourceId, lockResource, work)
+      return await this.bookings.inWriteTransaction(tenantId, resourceId, lockResource, work)
     } catch (error) {
       rethrowContention(error, 'The booking')
     }
@@ -312,7 +321,14 @@ export class BookingService {
     end: Date,
     excludeId?: string,
   ): Promise<void> {
-    const active = await this.bookings.activeOverlapping(trx, resource.id, start, end, excludeId)
+    const active = await this.bookings.activeOverlapping(
+      trx,
+      resource.tenant_id,
+      resource.id,
+      start,
+      end,
+      excludeId,
+    )
 
     for (const slot of slots) {
       const taken = countOccupying(active, slot)
@@ -326,8 +342,8 @@ export class BookingService {
     }
   }
 
-  async getById(id: string): Promise<BookingResponse> {
-    const row = await this.loadOrFail(id)
+  async getById(tenantId: string, id: string): Promise<BookingResponse> {
+    const row = await this.loadOrFail(tenantId, id)
     return toBookingResponse(row, row.timezone)
   }
 
@@ -341,12 +357,12 @@ export class BookingService {
    * hold whose `held_until` has passed is already `expired` by the time it is read, and the
    * decision uses the database's clock rather than this process's.
    */
-  async apply(id: string, action: BookingAction): Promise<BookingResponse> {
-    const initial = await this.loadOrFail(id)
+  async apply(tenantId: string, id: string, action: BookingAction): Promise<BookingResponse> {
+    const initial = await this.loadOrFail(tenantId, id)
     const { target, from } = TRANSITIONS[action]
 
-    const row = await this.inWrite(initial.resource_id, false, async (trx) => {
-      const current = await this.bookings.findIn(trx, id)
+    const row = await this.inWrite(tenantId, initial.resource_id, false, async (trx) => {
+      const current = await this.bookings.findIn(trx, tenantId, id)
       if (!current) throw new NotFoundError(`Booking ${id} not found`)
 
       if (current.status === target) return current
@@ -378,9 +394,13 @@ export class BookingService {
    * compares a row with itself, which is why "cancel plus book in one transaction" describes
    * the effect rather than the implementation — a single UPDATE is safe.
    */
-  async reschedule(id: string, body: RescheduleBookingBody): Promise<BookingResponse> {
-    const initial = await this.loadOrFail(id)
-    const resource = await this.resources.loadOrFail(initial.resource_id)
+  async reschedule(
+    tenantId: string,
+    id: string,
+    body: RescheduleBookingBody,
+  ): Promise<BookingResponse> {
+    const initial = await this.loadOrFail(tenantId, id)
+    const resource = await this.resources.loadOrFail(tenantId, initial.resource_id)
 
     const { start, end, slots } = await this.validateTarget(
       resource,
@@ -391,8 +411,8 @@ export class BookingService {
 
     const needsLock = capacityIsCounted(resource.concurrency_mode)
 
-    const row = await this.inWrite(resource.id, needsLock, async (trx, locked) => {
-      const booking = await this.bookings.findIn(trx, id)
+    const row = await this.inWrite(tenantId, resource.id, needsLock, async (trx, locked) => {
+      const booking = await this.bookings.findIn(trx, tenantId, id)
       if (!booking) throw new NotFoundError(`Booking ${id} not found`)
 
       if (booking.status !== 'held' && booking.status !== 'confirmed') {
@@ -446,13 +466,15 @@ export class BookingService {
   }
 
   async listForResource(
+    tenantId: string,
     resourceId: string,
     query: ResourceBookingsQuery,
   ): Promise<BookingResponse[]> {
-    const resource = await this.resources.loadOrFail(resourceId)
+    const resource = await this.resources.loadOrFail(tenantId, resourceId)
     const window = this.window(query.from, query.to, resource.timezone)
 
     const rows = await this.bookings.list({
+      tenantId,
       resourceId: resource.id,
       from: window.from,
       to: window.to,
@@ -461,10 +483,14 @@ export class BookingService {
     return rows.map((row) => toBookingResponse(row, row.timezone))
   }
 
-  async listForCustomer(query: CustomerBookingsQuery): Promise<BookingResponse[]> {
+  async listForCustomer(
+    tenantId: string,
+    query: CustomerBookingsQuery,
+  ): Promise<BookingResponse[]> {
     const window = this.window(query.from, query.to, 'utc')
 
     const rows = await this.bookings.list({
+      tenantId,
       customerId: query.customer_id,
       from: window.from,
       to: window.to,
@@ -473,8 +499,8 @@ export class BookingService {
     return rows.map((row) => toBookingResponse(row, row.timezone))
   }
 
-  async loadOrFail(id: string) {
-    const row = await this.bookings.findById(id)
+  async loadOrFail(tenantId: string, id: string) {
+    const row = await this.bookings.findById(tenantId, id)
     if (!row) throw new NotFoundError(`Booking ${id} not found`)
     return row
   }
@@ -582,9 +608,9 @@ export class BookingService {
       .toISODate()!
 
     const [scheduleRows, exceptionRows] = await Promise.all([
-      this.schedule.listByResource(resource.id),
+      this.schedule.listByResource(resource.tenant_id, resource.id),
       // listInRange is half-open on `to`, so the day after the last date is what includes it.
-      this.exceptions.listInRange(resource.id, first, afterLast),
+      this.exceptions.listInRange(resource.tenant_id, resource.id, first, afterLast),
     ])
 
     return generateSlots({

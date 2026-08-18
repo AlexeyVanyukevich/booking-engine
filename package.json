@@ -22,7 +22,12 @@
     "smoke": "./run smoke",
     "check": "./run check",
     "dev:server": "tsx watch src/server.ts",
-    "debug:server": "tsx watch --inspect src/server.ts"
+    "debug:server": "tsx watch --inspect src/server.ts",
+    "console": "node dist/src/console.js",
+    "dev:console": "tsx watch src/console.ts",
+    "test:ui": "playwright test",
+    "test:ui:headed": "playwright test --headed",
+    "debug:console": "tsx watch --inspect=9230 src/console.ts"
   },
   "keywords": [],
   "author": "",
@@ -31,6 +36,8 @@
   "private": "true",
   "type": "module",
   "dependencies": {
+    "@fastify/formbody": "^9.0.0",
+    "@fastify/rate-limit": "^11.2.0",
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.1",
     "@fastify/type-provider-typebox": "^6.1.0",
@@ -41,6 +48,7 @@
     "typebox": "^1.3.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@testcontainers/postgresql": "^12.0.4",
     "@types/luxon": "^3.7.2",
     "@types/node": "^26.1.2",

@@ -121,6 +121,20 @@ export const ResourceResponse = Type.Object(
 )
 export type ResourceResponse = Static<typeof ResourceResponse>
 
+export const ResourceListQuery = Type.Object(
+  {
+    is_active: Type.Optional(
+      Type.Boolean({
+        description: 'Narrows the list. Omitted, both active and inactive resources are returned.',
+      }),
+    ),
+  },
+  { additionalProperties: false },
+)
+export type ResourceListQuery = Static<typeof ResourceListQuery>
+
+export const ResourceListResponse = Type.Array(ResourceResponse)
+
 export const ErrorResponse = Type.Object(
   {
     error: Type.String({
