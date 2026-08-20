@@ -792,3 +792,16 @@ missing — the pattern every other scenario in [run](../../../run) already foll
 - **The console assumes one process.** The flash store in section 7.4 is the only piece of
   state that would need moving.
 - **RLS is one migration away**, and section 5.3 says what is in it.
+- **Commit `openapi.json` to this repository**, generated from the live document and asserted
+  equal to it by `openapi.test.ts`. Consumers currently have to run the engine to generate
+  their types, which is awkward in their CI; more importantly, a contract change would then be
+  visible in the diff of a pull request here, where the reviewer who is making it can see that
+  a field disappeared, instead of being discovered by a consumer's failing build. Roughly half
+  a day, and it is the base any published client would need anyway.
+- **A client library is not the answer yet.** What a consumer needs splits in two: the types,
+  already solved by generation from the OpenAPI document, and the behaviour — auth header,
+  backoff on `503` and `429`, idempotency keys, and what each error code *means*. That second
+  half is genuinely this engine's knowledge rather than its caller's, and it belongs here
+  eventually. But there is one consumer today, and a library extracted from a single use is a
+  guess about the shape of the second. The trigger is a second consumer, or a consumer in
+  another language — then the facade is extracted from real uses instead of imagined ones.
