@@ -15,6 +15,21 @@ declare module 'fastify' {
     /** Reachable without a key at all. Only health, the root redirect and the docs tree. */
     public?: true
   }
+  interface FastifyInstance {
+    /**
+     * What the `onRoute` guard below saw, kept rather than discarded: every route and the
+     * scope it requires, or nothing for a public one. Who may call what is a security surface,
+     * and one worth being able to enumerate rather than infer from a grep.
+     */
+    routeAuthorizations: RouteAuthorization[]
+  }
+}
+
+export interface RouteAuthorization {
+  method: string
+  url: string
+  /** Absent on a route declared `public: true`. */
+  scope?: Scope
 }
 
 const BEARER = /^Bearer (.+)$/
@@ -31,18 +46,30 @@ export function registerAuth(app: FastifyInstance, service: TenantService): void
   app.decorateRequest('apiKeyId', '')
   app.decorateRequest('scopes')
 
+  const authorizations: RouteAuthorization[] = []
+  app.decorate('routeAuthorizations', authorizations)
+
   /**
    * Default deny, enforced at startup rather than at request time. The alternative — a list of
    * protected prefixes — fails open: a route added later is unprotected until somebody
    * remembers to list it. This fails closed, and it fails before the process serves anything.
    */
   app.addHook('onRoute', (route) => {
-    if (route.config?.public === true || route.config?.scope !== undefined) return
+    // Swagger UI registers its own routes and cannot carry our config, so they are neither
+    // guarded nor recorded.
     if (isDocsRoute(route.url)) return
-    throw new Error(
-      `Route ${String(route.method)} ${route.url} declares neither a scope nor public: true. ` +
-        'Every route must say who may call it.',
-    )
+
+    if (route.config?.public !== true && route.config?.scope === undefined) {
+      throw new Error(
+        `Route ${String(route.method)} ${route.url} declares neither a scope nor public: true. ` +
+          'Every route must say who may call it.',
+      )
+    }
+
+    // Fastify pairs a HEAD route with every GET, which arrives here as its own registration.
+    for (const method of [route.method].flat()) {
+      authorizations.push({ method, url: route.url, scope: route.config?.scope })
+    }
   })
 
   /**
