@@ -12,6 +12,7 @@
     "start": "node dist/src/server.js",
     "worker": "node dist/src/worker.js",
     "migrate": "tsx src/db/migrate.ts",
+    "openapi": "tsx scripts/openapi.ts",
     "format": "prettier --write .",
     "dev:debug": "./run debug",
     "migrate:built": "node dist/src/db/migrate.js",

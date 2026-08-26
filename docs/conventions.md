@@ -215,6 +215,27 @@ Every route therefore carries `tags`, `summary` and a `response` map in its sche
 asserts this for all of them, and fails if a route is added without them or documented
 without existing.
 
+The document is also committed, as `openapi.json` at the repository root, and written only by
+`./run openapi`. A consumer generating its types then needs no running engine, and a contract
+change is visible in the diff of the pull request that makes it rather than in a consumer's
+build days later. `tests/integration/openapi.test.ts` asserts the file equals the live
+document, both as a contract and byte for byte, which is what makes regenerating it a step of
+changing a schema rather than an optional courtesy.
+
+The generator reads an **empty environment** rather than the ambient one. Two fields of the
+document are configured — the server URL carries `PORT`, and the range rule in the description
+carries `MAX_RANGE_DAYS` — so a developer with `PORT=3100` in their `.env` would otherwise
+produce a diff that says nothing about the API. It takes those defaults from `loadAppConfig`
+instead of restating them, so a changed default reaches the file without anyone remembering it
+should. `openapi.json` is in `.prettierignore`: Prettier packs short arrays onto one line,
+which would fight the generator and make every regeneration a diff.
+
+It also needs **no database**, which is why `AppConfig` exists: `buildApp` never connects — an
+entrypoint creates the handle and passes it in — so the connection string is not part of what
+the app reads, and `loadAppConfig` is the half of the loader that has defaults for everything.
+The route plugins are handed a database their repositories only store, because generating the
+document calls no handler and so builds no query.
+
 ---
 
 ## Configuration
@@ -232,6 +253,8 @@ fast at startup rather than surfacing later as an unexplained 500.
 | `MAX_HOLD_MINUTES`            | `60`       | Upper bound accepted from a caller for `hold_minutes`                                                                                |
 | `HOLD_SWEEP_INTERVAL_SECONDS` | `60`       | How often the hold sweep runs, in either entrypoint                                                                                  |
 | `HOLD_SWEEP_ENABLED`          | `true`     | Whether the API process sweeps on a timer; `worker.js` sweeps regardless — see [the sweep topologies](../README.md#background-sweep) |
+| `CONSOLE_PORT`                | `3001`     | Port for the key console. There is deliberately no `CONSOLE_HOST` — the bind address is hard-coded to `127.0.0.1`                    |
+| `RATE_LIMIT_PER_MINUTE`       | `600`      | Requests a single key may make per minute before `429 rate_limited`                                                                  |
 
 `HOLD_SWEEP_ENABLED` defaulting to true is load-bearing, not cosmetic: a dead worker service
 would otherwise be an invisible failure. See the README for why.
@@ -376,7 +399,7 @@ Recorded so they are not rediscovered as bugs.
 | `pool` mode rejected                                | Its data model is settled (members carry a `pool_id`, capacity is derived) but member selection and enforcement are not built                                                                                                                                                                                                | Spec 3                                                                                   |
 | No schedule history                                 | Audit trails belong above the engine                                                                                                                                                                                                                                                                                         | New table, if ever needed                                                                |
 | Slot grid anchored per window, not globally         | Two windows on a day each start their own grid, so 09:00–12:00 and 12:30–17:00 are offset by 30 minutes. The alternative silently drops the first half hour of the second window                                                                                                                                             | Intentional; not planned to change                                                       |
-| No authentication                                   | Deferred by the project owner. All routes register through one plugin, so a `preHandler` hook attaches in one place                                                                                                                                                                                                          | One hook                                                                                 |
+| The console has no authentication of its own        | Spec 4 authenticated the data plane with API keys; the console that issues them did not follow, because it binds to `127.0.0.1` and reaching that port already means holding the machine. The bind address is hard-coded rather than configurable, which makes that structural instead of a promise                          | A session or an operator identity, once the console is not the operator's own machine    |
 | Bookings in the past are accepted                   | The engine reads no clock; availability offers past slots, and "anything offered is bookable" follows. Back-dated entry is legitimate                                                                                                                                                                                        | A validation rule, if a domain ever wants it                                             |
 | A schedule edit may leave bookings off the new grid | Refusing it would freeze a schedule around a single distant booking, and the remedy is a business decision. Such a booking is not loose: occupancy is counted as overlap per slot, so it still occupies every slot of the new grid it touches. The resource can therefore look fuller than the domain intends, never emptier | A conflict query on `PUT`, and a policy to apply                                         |
 | `shared` serializes writes per resource             | One row lock is the whole mechanism; bookings for one resource on unrelated dates still queue behind each other                                                                                                                                                                                                              | SERIALIZABLE plus a retry loop; schema unchanged                                         |

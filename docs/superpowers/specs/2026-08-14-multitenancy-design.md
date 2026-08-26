@@ -792,3 +792,19 @@ missing — the pattern every other scenario in [run](../../../run) already foll
 - **The console assumes one process.** The flash store in section 7.4 is the only piece of
   state that would need moving.
 - **RLS is one migration away**, and section 5.3 says what is in it.
+- **Commit `openapi.json` to this repository** — _done, after this spec._ Generated from the
+  live document by `./run openapi` and asserted equal to it, both as a contract and byte for
+  byte, by `openapi.test.ts`. Consumers no longer have to run the engine to generate their
+  types, which was awkward in their CI; more importantly, a contract change is now visible in
+  the diff of a pull request here, where the reviewer who is making it can see that a field
+  disappeared, instead of being discovered by a consumer's failing build. It is also the base
+  any published client would need. Why the generator reads an empty environment rather than
+  the ambient one is in
+  [conventions.md](../../conventions.md#documentation-is-generated-never-written-twice).
+- **A client library is not the answer yet.** What a consumer needs splits in two: the types,
+  already solved by generation from the OpenAPI document, and the behaviour — auth header,
+  backoff on `503` and `429`, idempotency keys, and what each error code _means_. That second
+  half is genuinely this engine's knowledge rather than its caller's, and it belongs here
+  eventually. But there is one consumer today, and a library extracted from a single use is a
+  guess about the shape of the second. The trigger is a second consumer, or a consumer in
+  another language — then the facade is extracted from real uses instead of imagined ones.

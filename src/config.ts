@@ -1,5 +1,10 @@
-export interface Config {
-  databaseUrl: string
+/**
+ * Everything `buildApp` itself reads. The connection string is deliberately not part of it:
+ * the app never connects — an entrypoint creates the database handle and passes it in — and
+ * leaving it out is what lets the OpenAPI generator build the app without inventing a URL for
+ * a pool nobody opens.
+ */
+export interface AppConfig {
   port: number
   logLevel: string
   maxRangeDays: number
@@ -9,6 +14,10 @@ export interface Config {
   holdSweepEnabled: boolean
   consolePort: number
   rateLimitPerMinute: number
+}
+
+export interface Config extends AppConfig {
+  databaseUrl: string
 }
 
 function requireString(env: NodeJS.ProcessEnv, key: string): string {
@@ -39,8 +48,16 @@ function booleanFlag(env: NodeJS.ProcessEnv, key: string, fallback: boolean): bo
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
+  return { databaseUrl: requireString(env, 'DATABASE_URL'), ...loadAppConfig(env) }
+}
+
+/**
+ * The half with defaults, separated so a caller that opens no connection needs no connection
+ * string. `loadConfig` is the only other caller; splitting the two is what keeps the defaults
+ * stated once, so a changed default reaches every reader of them.
+ */
+export function loadAppConfig(env: NodeJS.ProcessEnv): AppConfig {
   return {
-    databaseUrl: requireString(env, 'DATABASE_URL'),
     port: positiveInt(env, 'PORT', 3000),
     logLevel: env.LOG_LEVEL?.trim() || 'info',
     maxRangeDays: positiveInt(env, 'MAX_RANGE_DAYS', 366),
