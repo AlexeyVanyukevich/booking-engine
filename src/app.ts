@@ -113,8 +113,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     theme: { css: [{ filename: 'theme.css', content: swaggerThemeCss }] },
   })
 
-  // Every route is registered through this one place, so a future authentication
-  // preHandler attaches here without touching any handler. All of them are plugins,
+  // Every route is registered through this one place, which is what let `registerAuth`
+  // above attach to all of them without touching any handler. All of them are plugins,
   // including health: a route added directly to the root instance would load before
   // the OpenAPI generator and be missing from the documentation.
   void app.register(healthRoutes)
