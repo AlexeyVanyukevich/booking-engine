@@ -243,6 +243,22 @@ the app reads, and `loadAppConfig` is the half of the loader that has defaults f
 The route plugins are handed a database their repositories only store, because generating the
 document calls no handler and so builds no query.
 
+### The tables that cannot be generated are asserted instead
+
+Three tables restate something the code already states exactly once, and cannot be generated
+away without losing the prose they sit in: the configuration table below, the error table
+above, and the endpoint table in the README.
+
+`tests/unit/documented-tables.test.ts` reads them out of the Markdown and diffs them against
+`loadAppConfig`, the `AppError` subclasses together with `CLIENT_ERROR_CODES`, and
+`openapi.json`. A variable added without a row, a row whose default no longer matches, an
+error code nothing documents, an endpoint added without a line — each fails the suite instead
+of waiting to be noticed. Two of the three had already drifted when the tests were written.
+
+That is the rule at the top of this document made mechanical: if something is spelled out
+twice, delete the copy, and where the copy has to stay, make it checkable. Prose that can be
+neither is proof-read by hand, which is to say not at all.
+
 ---
 
 ## Configuration
