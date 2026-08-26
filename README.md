@@ -8,14 +8,14 @@ This stage implements resources, weekly schedules, per-date exceptions, availabi
 bookings — creation, the lifecycle, hold expiry, reschedule, listings, and capacity for both
 `exclusive` and `shared`. The `pool` concurrency mode arrives in spec 3.
 
-| Document                                           | What it holds                                                               |
-| -------------------------------------------------- | --------------------------------------------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)       | The system: data model, lifecycle, full API surface across all three slices |
-| [docs/conventions.md](docs/conventions.md)         | Rules that hold everywhere: formats, error shape, stack, layout, testing    |
-| [docs/test-cases.md](docs/test-cases.md)           | Every promised behaviour as a runnable case, with its automated coverage    |
-| [docs/superpowers/specs/](docs/superpowers/specs/) | One spec per slice — what it delivers and why it was decided that way       |
-| [docs/superpowers/plans/](docs/superpowers/plans/) | The task-by-task plan that implemented each spec                            |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                 | Commit conventions and workflow                                             |
+| Document                                           | What it holds                                                            |
+| -------------------------------------------------- | ------------------------------------------------------------------------ |
+| [docs/architecture.md](docs/architecture.md)       | The system: data model, lifecycle, full API surface across every slice   |
+| [docs/conventions.md](docs/conventions.md)         | Rules that hold everywhere: formats, error shape, stack, layout, testing |
+| [docs/test-cases.md](docs/test-cases.md)           | Every promised behaviour as a runnable case, with its automated coverage |
+| [docs/superpowers/specs/](docs/superpowers/specs/) | One spec per slice — what it delivers and why it was decided that way    |
+| [docs/superpowers/plans/](docs/superpowers/plans/) | The task-by-task plan that implemented each spec                         |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                 | Commit conventions and workflow                                          |
 
 ## Requirements
 
@@ -48,6 +48,7 @@ One command per scenario. `./run` on its own lists them.
 | ---------------------- | ---------------------------------------------------- |
 | `./run dev`            | Database in Docker, engine locally with reload       |
 | `./run debug`          | Same, plus a Node inspector on 9229                  |
+| `./run stop`           | Stop whatever `--bg` started, keeping the database   |
 | `./run up`             | Build and start the whole stack in Docker, detached  |
 | `./run down`           | Stop the stack, keeping the data                     |
 | `./run reset`          | Wipe the database and start fresh                    |
@@ -56,11 +57,17 @@ One command per scenario. `./run` on its own lists them.
 | `./run openapi`        | Rewrite the committed `openapi.json`                 |
 | `./run psql`           | Open a psql shell on the development database        |
 | `./run test`           | Run the full suite once                              |
+| `./run test:watch`     | Re-run the suite on change                           |
+| `./run test:ui`        | The console suite in a real browser                  |
 | `./run check`          | Types, formatting and the full suite                 |
 | `./run smoke [filter]` | Replay the test-case suites against a running engine |
 
 `./run up` also starts a `worker` service alongside `db`, `migrate` and `app` — the same image,
 sweeping expired holds on its own. See [Background sweep](#background-sweep) below.
+
+`./run test:ui` needs a Playwright browser binary, which is why it stays out of `./run check`:
+a missing download must not read as a broken build. The scenario checks for the binary and
+prints the install command when it is absent.
 
 **Which one to use while writing code: `./run dev`.** It reloads on every save, so nothing
 needs rebuilding. `./run up` runs the compiled image in Docker, where a source change means
@@ -215,19 +222,21 @@ when request-serving processes should do no background work at all.
 
 Beyond the scenarios above, these do one thing each and are what `./run` calls internally:
 
-| Command                 | Purpose                                                   |
-| ----------------------- | --------------------------------------------------------- |
-| `npm run build`         | Compile to `dist/`                                        |
-| `npm start`             | Run the compiled build                                    |
-| `npm run migrate`       | Apply migrations from the TypeScript sources              |
-| `npm run migrate:built` | Apply migrations from `dist/`, used inside the container  |
-| `npm run dev:server`    | Start the engine alone, assuming a database is already up |
-| `npm run dev:console`   | Start the console alone, same assumption                  |
-| `npm run debug:console` | The console with an inspector on 9230                     |
-| `npm run debug:server`  | The same with an inspector                                |
-| `npm run worker`        | Run the hold-sweep worker alone, looping                  |
-| `npm run openapi`       | Rewrite `openapi.json` from the route schemas             |
-| `npm run format`        | Format with Prettier                                      |
+| Command                  | Purpose                                                   |
+| ------------------------ | --------------------------------------------------------- |
+| `npm run build`          | Compile to `dist/`                                        |
+| `npm start`              | Run the compiled engine                                   |
+| `npm run console`        | Run the compiled console                                  |
+| `npm run migrate`        | Apply migrations from the TypeScript sources              |
+| `npm run migrate:built`  | Apply migrations from `dist/`, used inside the container  |
+| `npm run dev:server`     | Start the engine alone, assuming a database is already up |
+| `npm run dev:console`    | Start the console alone, same assumption                  |
+| `npm run debug:console`  | The console with an inspector on 9230                     |
+| `npm run debug:server`   | The same with an inspector                                |
+| `npm run worker`         | Run the hold-sweep worker alone, looping                  |
+| `npm run openapi`        | Rewrite `openapi.json` from the route schemas             |
+| `npm run test:ui:headed` | The console browser suite with the browser visible        |
+| `npm run format`         | Format with Prettier                                      |
 
 The test suite starts its own throwaway Postgres container and ignores the compose service,
 so tests need Docker running but no database prepared.
