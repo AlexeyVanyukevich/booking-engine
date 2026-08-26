@@ -53,6 +53,7 @@ One command per scenario. `./run` on its own lists them.
 | `./run reset`          | Wipe the database and start fresh                    |
 | `./run logs [svc]`     | Follow logs, `app` by default                        |
 | `./run docs`           | Open the interactive API reference                   |
+| `./run openapi`        | Rewrite the committed `openapi.json`                 |
 | `./run psql`           | Open a psql shell on the development database        |
 | `./run test`           | Run the full suite once                              |
 | `./run check`          | Types, formatting and the full suite                 |
@@ -225,6 +226,7 @@ Beyond the scenarios above, these do one thing each and are what `./run` calls i
 | `npm run debug:console` | The console with an inspector on 9230                     |
 | `npm run debug:server`  | The same with an inspector                                |
 | `npm run worker`        | Run the hold-sweep worker alone, looping                  |
+| `npm run openapi`       | Rewrite `openapi.json` from the route schemas             |
 | `npm run format`        | Format with Prettier                                      |
 
 The test suite starts its own throwaway Postgres container and ignores the compose service,
@@ -248,6 +250,12 @@ that no documented route is missing from the code.
 
 Also available as raw OpenAPI 3.1 at `/docs/json` and `/docs/yaml` — feed either to Postman,
 Insomnia, or a client generator.
+
+The same document is committed as [openapi.json](openapi.json), so generating a client's types
+needs no running engine — which matters most in a consumer's CI, where starting one is awkward.
+It is written by `./run openapi` and never by hand, and a test fails when it and the route
+schemas disagree, so a contract change is visible in the diff of a pull request here rather
+than in a consumer's failing build later.
 
 The endpoints at a glance:
 

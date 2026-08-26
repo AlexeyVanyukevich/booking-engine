@@ -1,0 +1,3825 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Booking Engine",
+    "version": "0.1.0",
+    "description": "A domain-agnostic booking engine, working on three abstractions — resource, schedule, booking — with no knowledge of what is being booked.\n\n**Conventions that apply everywhere**\n\n- Date ranges are half-open: `from` inclusive, `to` exclusive, at most 366 days.\n- Durations use a restricted ISO-8601 grammar. `P1D` and `PT24H` are **not** interchangeable: `P1D` runs anchor to anchor and spans 23, 24 or 25 real hours across a daylight-saving transition, and the written form is what makes a resource day-based.\n- Timezones must be named IANA zones. A fixed offset such as `+02:00` is rejected, because an offset carries no daylight-saving rules.\n- Weekdays are Monday = 0, Sunday = 6 — matching neither Postgres nor JavaScript.\n- Timestamps carry an offset: `2026-07-20T09:00:00+02:00`.\n- Errors always have the shape `{ error, message, details? }`.\n\nEvery request carries an API key in an `Authorization: Bearer` header. A key belongs to one tenant and sees only that tenant's rows; another tenant's id answers `404`, never `403`.\n\nA key holds a set of scopes, and each route requires exactly one of them. No scope implies another: `bookings.write` does not confer `bookings.read`, which is what lets a partner channel create bookings without being able to list the tenant's calendar. Keys are issued from the console."
+  },
+  "components": {
+    "schemas": {}
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Liveness probe",
+        "tags": [
+          "Health"
+        ],
+        "description": "Reports that the process is alive. It does **not** check the database — an engine that cannot reach Postgres still answers 200 here, so do not use this as a readiness probe.",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "status"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "example": {
+                  "status": "ok"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resources": {
+      "post": {
+        "summary": "Create a resource",
+        "tags": [
+          "Resources"
+        ],
+        "description": "Creates a bookable unit. The engine stores only scheduling parameters; anything describing *what* is booked belongs to the domain layer above.\n\n**`slot_duration` decides the kind.** `P1D` or `P7D` make the resource day-based: schedule rules carry null times and each slot runs anchor to anchor. `PT30M` or `PT1H30M` make it intraday: rules carry both times.\n\n**`slot_anchor_time`** is where a day-based day begins — `14:00` for a hotel. On an intraday resource it must stay `00:00`; a different value is rejected rather than ignored.\n\n`concurrency_mode: \"pool\"` is not implemented yet and is rejected.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "timezone",
+                  "slot_duration",
+                  "concurrency_mode"
+                ],
+                "properties": {
+                  "timezone": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Named IANA zone. A fixed offset such as `+02:00` is rejected: it carries no daylight-saving rules, so a resource stored that way would be an hour off for half the year.",
+                    "example": "Europe/Warsaw"
+                  },
+                  "slot_duration": {
+                    "type": "string",
+                    "minLength": 2,
+                    "description": "Restricted ISO-8601: `P<n>D`, or `PT[<n>H][<n>M]` under 24 hours. `P1D` (anchor to anchor, DST-aware) and `PT24H` (exactly 24 elapsed hours, rejected) are not interchangeable. The written form is what makes a resource day-based. Other valid values: `PT30M`, `PT1H`, `PT1H30M`, `P7D`.",
+                    "example": "P1D"
+                  },
+                  "slot_anchor_time": {
+                    "type": "string",
+                    "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                    "description": "Where a day-based resource's day begins — a hotel with 14:00 check-in sets `14:00`. Must stay at `00:00` for intraday resources, where a non-default value is rejected rather than ignored.",
+                    "example": "14:00"
+                  },
+                  "capacity": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Concurrent bookings allowed per slot. Must be 1 when the mode is `exclusive`.",
+                    "example": 1
+                  },
+                  "concurrency_mode": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "exclusive"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "shared"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "pool"
+                        ]
+                      }
+                    ],
+                    "description": "`exclusive` — one booking per slot. `shared` — up to `capacity` per slot. `pool` — a group of interchangeable resources, **not implemented yet** and rejected with 400.",
+                    "example": "exclusive"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "example": {
+                "timezone": "Europe/Warsaw",
+                "slot_duration": "P1D",
+                "slot_anchor_time": "14:00",
+                "concurrency_mode": "exclusive"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "timezone",
+                    "slot_duration",
+                    "slot_anchor_time",
+                    "capacity",
+                    "concurrency_mode",
+                    "is_active"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "timezone": {
+                      "type": "string"
+                    },
+                    "slot_duration": {
+                      "type": "string",
+                      "description": "Canonical form — `PT0H30M` is reported back as `PT30M`."
+                    },
+                    "slot_anchor_time": {
+                      "type": "string",
+                      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                      "description": "Time of day as HH:MM, 24-hour",
+                      "example": "09:00"
+                    },
+                    "capacity": {
+                      "type": "integer"
+                    },
+                    "concurrency_mode": {
+                      "type": "string"
+                    },
+                    "is_active": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "example": {
+                  "id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                  "timezone": "Europe/Warsaw",
+                  "slot_duration": "P1D",
+                  "slot_anchor_time": "14:00",
+                  "capacity": 1,
+                  "concurrency_mode": "exclusive",
+                  "is_active": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List resources",
+        "tags": [
+          "Resources"
+        ],
+        "description": "Every resource this key's tenant owns, oldest first.\n\nA caller that keeps its own records already knows its ids, so this is not how it finds them. It exists for the console and for reconciling the two sets when they disagree.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "boolean"
+            },
+            "in": "query",
+            "name": "is_active",
+            "required": false,
+            "description": "Narrows the list. Omitted, both active and inactive resources are returned."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "timezone",
+                      "slot_duration",
+                      "slot_anchor_time",
+                      "capacity",
+                      "concurrency_mode",
+                      "is_active"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "timezone": {
+                        "type": "string"
+                      },
+                      "slot_duration": {
+                        "type": "string",
+                        "description": "Canonical form — `PT0H30M` is reported back as `PT30M`."
+                      },
+                      "slot_anchor_time": {
+                        "type": "string",
+                        "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                        "description": "Time of day as HH:MM, 24-hour",
+                        "example": "09:00"
+                      },
+                      "capacity": {
+                        "type": "integer"
+                      },
+                      "concurrency_mode": {
+                        "type": "string"
+                      },
+                      "is_active": {
+                        "type": "boolean"
+                      }
+                    },
+                    "example": {
+                      "id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                      "timezone": "Europe/Warsaw",
+                      "slot_duration": "P1D",
+                      "slot_anchor_time": "14:00",
+                      "capacity": 1,
+                      "concurrency_mode": "exclusive",
+                      "is_active": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resources/{id}": {
+      "get": {
+        "summary": "Read a resource",
+        "tags": [
+          "Resources"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Resource id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "timezone",
+                    "slot_duration",
+                    "slot_anchor_time",
+                    "capacity",
+                    "concurrency_mode",
+                    "is_active"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "timezone": {
+                      "type": "string"
+                    },
+                    "slot_duration": {
+                      "type": "string",
+                      "description": "Canonical form — `PT0H30M` is reported back as `PT30M`."
+                    },
+                    "slot_anchor_time": {
+                      "type": "string",
+                      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                      "description": "Time of day as HH:MM, 24-hour",
+                      "example": "09:00"
+                    },
+                    "capacity": {
+                      "type": "integer"
+                    },
+                    "concurrency_mode": {
+                      "type": "string"
+                    },
+                    "is_active": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "example": {
+                  "id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                  "timezone": "Europe/Warsaw",
+                  "slot_duration": "P1D",
+                  "slot_anchor_time": "14:00",
+                  "capacity": 1,
+                  "concurrency_mode": "exclusive",
+                  "is_active": true
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update the mutable fields of a resource",
+        "tags": [
+          "Resources"
+        ],
+        "description": "`timezone` and `concurrency_mode` are absent on purpose — both are immutable. Changing a timezone moves no row, but it reinterprets the schedule: `09:00–17:00` would denote different moments and existing bookings could fall outside working hours.\n\nUnknown fields are rejected rather than ignored, so an attempt to change one of them fails loudly instead of appearing to succeed.\n\nThe **resulting state** is validated, not the patch — changing only the duration can invalidate an anchor that was legal before.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "slot_duration": {
+                    "type": "string",
+                    "minLength": 2,
+                    "description": "Restricted ISO-8601: `P<n>D`, or `PT[<n>H][<n>M]` under 24 hours. `P1D` (anchor to anchor, DST-aware) and `PT24H` (exactly 24 elapsed hours, rejected) are not interchangeable. The written form is what makes a resource day-based. Other valid values: `PT30M`, `PT1H`, `PT1H30M`, `P7D`.",
+                    "example": "P1D"
+                  },
+                  "slot_anchor_time": {
+                    "type": "string",
+                    "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                    "description": "Where a day-based resource's day begins — a hotel with 14:00 check-in sets `14:00`. Must stay at `00:00` for intraday resources, where a non-default value is rejected rather than ignored.",
+                    "example": "14:00"
+                  },
+                  "capacity": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Concurrent bookings allowed per slot. Must be 1 when the mode is `exclusive`.",
+                    "example": 1
+                  },
+                  "is_active": {
+                    "type": "boolean",
+                    "description": "Soft-disable. An inactive resource returns an empty slot list."
+                  }
+                },
+                "additionalProperties": false
+              },
+              "example": {
+                "is_active": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Resource id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "timezone",
+                    "slot_duration",
+                    "slot_anchor_time",
+                    "capacity",
+                    "concurrency_mode",
+                    "is_active"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "timezone": {
+                      "type": "string"
+                    },
+                    "slot_duration": {
+                      "type": "string",
+                      "description": "Canonical form — `PT0H30M` is reported back as `PT30M`."
+                    },
+                    "slot_anchor_time": {
+                      "type": "string",
+                      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                      "description": "Time of day as HH:MM, 24-hour",
+                      "example": "09:00"
+                    },
+                    "capacity": {
+                      "type": "integer"
+                    },
+                    "concurrency_mode": {
+                      "type": "string"
+                    },
+                    "is_active": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "example": {
+                  "id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                  "timezone": "Europe/Warsaw",
+                  "slot_duration": "P1D",
+                  "slot_anchor_time": "14:00",
+                  "capacity": 1,
+                  "concurrency_mode": "exclusive",
+                  "is_active": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a resource",
+        "tags": [
+          "Resources"
+        ],
+        "description": "A hard delete that cascades to the schedule and the exceptions.\n\nIt is refused with `409 resource_has_bookings` when the resource has bookings in **any** status, terminal ones included: a delete must not discard booking history as a side effect. `is_active: false` is how a resource is retired.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Resource id"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Default Response"
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resources/{id}/schedule": {
+      "get": {
+        "summary": "Read the weekly schedule",
+        "tags": [
+          "Schedule"
+        ],
+        "description": "Rules ordered by weekday, then by start time.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Resource id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "day_of_week",
+                      "start_time",
+                      "end_time"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "day_of_week": {
+                        "type": "integer",
+                        "description": "Monday = 0 … Sunday = 6"
+                      },
+                      "start_time": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                            "description": "Time of day as HH:MM, 24-hour",
+                            "examples": [
+                              "09:00",
+                              "14:00"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "end_time": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                            "description": "Time of day as HH:MM, 24-hour",
+                            "examples": [
+                              "09:00",
+                              "14:00"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Replace the weekly schedule",
+        "tags": [
+          "Schedule"
+        ],
+        "description": "Replaces the whole schedule in one transaction. An empty array is valid and means \"never available\". A rejected submission writes nothing, so the previous schedule survives intact.\n\nWeekdays are **Monday = 0, Sunday = 6**.\n\nThree rules are checked across the whole set:\n\n- **Shape matches the duration** — a day-based resource takes null times, at most one rule per weekday; an intraday resource requires both times.\n- **No overlap on a weekday** — touching endpoints are fine, so 09:00–12:00 and 12:00–17:00 are two windows rather than a clash.\n- **`start_time` precedes `end_time`** — a window crossing midnight is refused; express 22:00–02:00 as two rules on adjacent days.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "day_of_week",
+                    "start_time",
+                    "end_time"
+                  ],
+                  "properties": {
+                    "day_of_week": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 6,
+                      "description": "Monday = 0 … Sunday = 6. Note this matches neither Postgres nor JavaScript.",
+                      "example": 0
+                    },
+                    "start_time": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                          "description": "Time of day as HH:MM, 24-hour",
+                          "examples": [
+                            "09:00",
+                            "14:00"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Start of the window, or `null` on a day-based resource."
+                    },
+                    "end_time": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                          "description": "Time of day as HH:MM, 24-hour",
+                          "examples": [
+                            "09:00",
+                            "14:00"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "End of the window, or `null` on a day-based resource. Must follow the start."
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "description": "The complete schedule. Whatever is not in this list is deleted. An empty array means \"never available\"."
+              },
+              "examples": {
+                "example1": {
+                  "value": [
+                    {
+                      "day_of_week": 0,
+                      "start_time": "09:00",
+                      "end_time": "13:00"
+                    },
+                    {
+                      "day_of_week": 0,
+                      "start_time": "14:00",
+                      "end_time": "17:00"
+                    }
+                  ]
+                },
+                "example2": {
+                  "value": [
+                    {
+                      "day_of_week": 0,
+                      "start_time": null,
+                      "end_time": null
+                    },
+                    {
+                      "day_of_week": 1,
+                      "start_time": null,
+                      "end_time": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "description": "The complete schedule. Whatever is not in this list is deleted. An empty array means \"never available\"."
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Resource id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "day_of_week",
+                      "start_time",
+                      "end_time"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "day_of_week": {
+                        "type": "integer",
+                        "description": "Monday = 0 … Sunday = 6"
+                      },
+                      "start_time": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                            "description": "Time of day as HH:MM, 24-hour",
+                            "examples": [
+                              "09:00",
+                              "14:00"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "end_time": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                            "description": "Time of day as HH:MM, 24-hour",
+                            "examples": [
+                              "09:00",
+                              "14:00"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resources/{id}/exceptions": {
+      "get": {
+        "summary": "List exceptions in a date range",
+        "tags": [
+          "Exceptions"
+        ],
+        "description": "The range is half-open: `from` inclusive, `to` exclusive. Both are required, and the span is capped at `MAX_RANGE_DAYS`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "example": "2026-07-20",
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "description": "First date, inclusive"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "example": "2026-07-27",
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "description": "Last date, exclusive — nothing on this date is returned"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Resource id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "date",
+                      "start_time",
+                      "end_time"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "date": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                        "description": "Calendar date, interpreted in the resource's timezone",
+                        "example": "2026-07-20"
+                      },
+                      "start_time": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                            "description": "Time of day as HH:MM, 24-hour",
+                            "examples": [
+                              "09:00",
+                              "14:00"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "end_time": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                            "description": "Time of day as HH:MM, 24-hour",
+                            "examples": [
+                              "09:00",
+                              "14:00"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resources/{id}/exceptions/{date}": {
+      "put": {
+        "summary": "Create or overwrite the exception for a date",
+        "tags": [
+          "Exceptions"
+        ],
+        "description": "Idempotent — the date is the key, so repeating the call overwrites rather than accumulating.\n\nAn exception **replaces** the weekly schedule for its date entirely; it never merges with it.\n\nBoth times `null` means a day off, valid for any resource. Altered hours only make sense on an intraday resource — a day-based one has no hours to alter, and the attempt is rejected.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "start_time",
+                  "end_time"
+                ],
+                "properties": {
+                  "start_time": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                        "description": "Time of day as HH:MM, 24-hour",
+                        "examples": [
+                          "09:00",
+                          "14:00"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Both times `null` means a day off."
+                  },
+                  "end_time": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                        "description": "Time of day as HH:MM, 24-hour",
+                        "examples": [
+                          "09:00",
+                          "14:00"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "examples": {
+                "example1": {
+                  "value": {
+                    "start_time": "10:00",
+                    "end_time": "14:00"
+                  }
+                },
+                "example2": {
+                  "value": {
+                    "start_time": null,
+                    "end_time": null
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Resource id"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "example": "2026-07-20",
+            "in": "path",
+            "name": "date",
+            "required": true,
+            "description": "Calendar date, interpreted in the resource's timezone"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "date",
+                    "start_time",
+                    "end_time"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "date": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                      "description": "Calendar date, interpreted in the resource's timezone",
+                      "example": "2026-07-20"
+                    },
+                    "start_time": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                          "description": "Time of day as HH:MM, 24-hour",
+                          "examples": [
+                            "09:00",
+                            "14:00"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "end_time": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                          "description": "Time of day as HH:MM, 24-hour",
+                          "examples": [
+                            "09:00",
+                            "14:00"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove the exception for a date",
+        "tags": [
+          "Exceptions"
+        ],
+        "description": "Idempotent: a date with no exception also returns 204, matching the idempotent PUT.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Resource id"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "example": "2026-07-20",
+            "in": "path",
+            "name": "date",
+            "required": true,
+            "description": "Calendar date, interpreted in the resource's timezone"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Default Response"
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resources/{id}/availability": {
+      "get": {
+        "summary": "Compute the slots a resource offers in a date range",
+        "tags": [
+          "Availability"
+        ],
+        "description": "For each date in the half-open range the engine resolves the available windows and slices them into slots:\n\n1. An exception for the date **replaces** the weekly schedule; both times null means a day off and the date yields nothing.\n2. Otherwise the weekly rules for that weekday apply.\n3. Each window is sliced from its start — or from `slot_anchor_time` on a day-based resource — stepping by `slot_duration`. A remainder shorter than one slot is dropped, so 09:00–17:30 with hourly slots yields eight.\n\nAll arithmetic runs in the resource's local time. A `P1D` slot therefore spans 23, 24 or 25 real hours across a daylight-saving transition while still running anchor to anchor — try `from=2026-03-28&to=2026-03-31` on a Warsaw resource.\n\nAn inactive resource returns an empty list rather than 404: it exists, but is not bookable.\n\n`available` is false once a slot is at capacity. Held bookings count until their hold expires — a read never waits for the background sweep.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "example": "2026-07-20",
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "description": "First date, inclusive"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "example": "2026-07-23",
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "description": "Last date, exclusive — no slot will start on this date"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Resource id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "slots"
+                  ],
+                  "properties": {
+                    "slots": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "start",
+                          "end",
+                          "available"
+                        ],
+                        "properties": {
+                          "start": {
+                            "type": "string",
+                            "description": "ISO-8601 with the resource's offset",
+                            "example": "2026-07-20T14:00:00+02:00"
+                          },
+                          "end": {
+                            "type": "string",
+                            "example": "2026-07-21T14:00:00+02:00"
+                          },
+                          "available": {
+                            "type": "boolean",
+                            "description": "False when the slot is at capacity. A held booking counts until its hold expires; cancelled, completed and expired ones do not."
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "slots": [
+                    {
+                      "start": "2026-07-20T14:00:00+02:00",
+                      "end": "2026-07-21T14:00:00+02:00",
+                      "available": true
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resources/{id}/bookings": {
+      "post": {
+        "summary": "Book a run of slots",
+        "tags": [
+          "Bookings"
+        ],
+        "description": "The requested interval must equal a **contiguous run of the slots `GET /availability` returns** for that period. Anything offered is bookable, anything bookable was offered — one definition, one implementation.\n\n- `400 invalid_slot_boundary` — a start or end that is not on the grid.\n- `400 outside_schedule` — the slots run out, or a gap interrupts them, before the requested end.\n- `409 slot_unavailable` — the slots are offered, but capacity for them is taken.\n- `200` instead of `201` — an idempotency key replayed an existing booking.\n\nWithout `hold`, the booking is `confirmed` immediately. With `hold: true` it is `held` until `held_until`, and `POST /bookings/:id/confirm` must arrive before then.\n\nA booking in the past is accepted: the engine reads no clock, availability offers past slots, and back-dated entry is a legitimate administrative action.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "start_time",
+                  "end_time"
+                ],
+                "properties": {
+                  "customer_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Opaque external identifier. The engine never interprets it. Optional: a caller keeping its own guest records need not hand one over, and a booking without it is invisible to `GET /bookings?customer_id=`. It still takes part in what an idempotency key stands for, so a replay that adds or drops it is refused.",
+                    "example": "customer-42"
+                  },
+                  "start_time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+                    "description": "ISO-8601 timestamp. An offset (`Z` or `±HH:MM`) is required — without one the instant is ambiguous. Must fall on a slot boundary — the same grid `GET /availability` returns.",
+                    "example": "2026-07-20T09:00:00+02:00"
+                  },
+                  "end_time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+                    "description": "ISO-8601 timestamp. An offset (`Z` or `±HH:MM`) is required — without one the instant is ambiguous. Must fall on a slot boundary.",
+                    "example": "2026-07-20T10:00:00+02:00"
+                  },
+                  "hold": {
+                    "type": "boolean",
+                    "description": "When true the booking is created `held` and must be confirmed before `held_until` passes. Otherwise it is `confirmed` immediately.",
+                    "example": true
+                  },
+                  "hold_minutes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "How long the hold lasts. Only valid together with `hold: true`; sent alone it is rejected rather than ignored.",
+                    "example": 10
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "Optional. Replaying the same key with the same booking returns the original with 200; the same key describing a different booking is rejected.",
+                    "example": "order-8f2c"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "example": {
+                "customer_id": "customer-42",
+                "start_time": "2026-07-20T09:00:00+02:00",
+                "end_time": "2026-07-20T10:00:00+02:00"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Resource id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "resource_id",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "customer_id",
+                    "held_until"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "resource_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "start_time": {
+                      "type": "string",
+                      "description": "ISO-8601 in the resource's timezone"
+                    },
+                    "end_time": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "`held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired`"
+                    },
+                    "customer_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Null when the booking was created without one."
+                    },
+                    "held_until": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Set on `held` and `expired` rows, null everywhere else."
+                    }
+                  }
+                },
+                "example": {
+                  "id": "9c1f0b7a-3d5e-4a2b-8f6c-1e4d7a9b2c30",
+                  "resource_id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                  "start_time": "2026-07-20T09:00:00+02:00",
+                  "end_time": "2026-07-20T10:00:00+02:00",
+                  "status": "confirmed",
+                  "customer_id": "customer-42",
+                  "held_until": null
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "resource_id",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "customer_id",
+                    "held_until"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "resource_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "start_time": {
+                      "type": "string",
+                      "description": "ISO-8601 in the resource's timezone"
+                    },
+                    "end_time": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "`held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired`"
+                    },
+                    "customer_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Null when the booking was created without one."
+                    },
+                    "held_until": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Set on `held` and `expired` rows, null everywhere else."
+                    }
+                  }
+                },
+                "example": {
+                  "id": "9c1f0b7a-3d5e-4a2b-8f6c-1e4d7a9b2c30",
+                  "resource_id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                  "start_time": "2026-07-20T09:00:00+02:00",
+                  "end_time": "2026-07-20T10:00:00+02:00",
+                  "status": "confirmed",
+                  "customer_id": "customer-42",
+                  "held_until": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List the bookings of one resource",
+        "tags": [
+          "Bookings"
+        ],
+        "description": "The window is required and interpreted in the resource's own timezone, like availability and exceptions. A booking is included when its interval overlaps it.\n\nThere is no pagination: the window is bounded by `MAX_RANGE_DAYS`, which is the bound the rest of the engine relies on.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "example": "2026-07-20",
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "description": "First date, inclusive, in the resource's timezone"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "example": "2026-07-27",
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "description": "Last date, exclusive"
+          },
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "held"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "confirmed"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "cancelled"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "completed"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "no_show"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "expired"
+                  ]
+                }
+              ]
+            },
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Narrows the list to one status. Omitted, every status is returned."
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Resource id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "resource_id",
+                      "start_time",
+                      "end_time",
+                      "status",
+                      "customer_id",
+                      "held_until"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "resource_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "start_time": {
+                        "type": "string",
+                        "description": "ISO-8601 in the resource's timezone"
+                      },
+                      "end_time": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "description": "`held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired`"
+                      },
+                      "customer_id": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "Null when the booking was created without one."
+                      },
+                      "held_until": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "Set on `held` and `expired` rows, null everywhere else."
+                      }
+                    },
+                    "example": {
+                      "id": "9c1f0b7a-3d5e-4a2b-8f6c-1e4d7a9b2c30",
+                      "resource_id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                      "start_time": "2026-07-20T09:00:00+02:00",
+                      "end_time": "2026-07-20T10:00:00+02:00",
+                      "status": "confirmed",
+                      "customer_id": "customer-42",
+                      "held_until": null
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bookings/{id}": {
+      "get": {
+        "summary": "Read a booking",
+        "tags": [
+          "Bookings"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Booking id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "resource_id",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "customer_id",
+                    "held_until"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "resource_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "start_time": {
+                      "type": "string",
+                      "description": "ISO-8601 in the resource's timezone"
+                    },
+                    "end_time": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "`held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired`"
+                    },
+                    "customer_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Null when the booking was created without one."
+                    },
+                    "held_until": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Set on `held` and `expired` rows, null everywhere else."
+                    }
+                  }
+                },
+                "example": {
+                  "id": "9c1f0b7a-3d5e-4a2b-8f6c-1e4d7a9b2c30",
+                  "resource_id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                  "start_time": "2026-07-20T09:00:00+02:00",
+                  "end_time": "2026-07-20T10:00:00+02:00",
+                  "status": "confirmed",
+                  "customer_id": "customer-42",
+                  "held_until": null
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bookings/{id}/confirm": {
+      "post": {
+        "summary": "Confirm a held booking",
+        "tags": [
+          "Bookings"
+        ],
+        "description": "Turns a `held` booking into a `confirmed` one, provided `held_until` has not passed.\n\nConfirming an already-confirmed booking is a successful no-op, so a retry after a network timeout does not fail. A hold that ran out answers `410 hold_expired` rather than `409`, because the caller needs to tell the two apart.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Booking id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "resource_id",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "customer_id",
+                    "held_until"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "resource_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "start_time": {
+                      "type": "string",
+                      "description": "ISO-8601 in the resource's timezone"
+                    },
+                    "end_time": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "`held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired`"
+                    },
+                    "customer_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Null when the booking was created without one."
+                    },
+                    "held_until": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Set on `held` and `expired` rows, null everywhere else."
+                    }
+                  }
+                },
+                "example": {
+                  "id": "9c1f0b7a-3d5e-4a2b-8f6c-1e4d7a9b2c30",
+                  "resource_id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                  "start_time": "2026-07-20T09:00:00+02:00",
+                  "end_time": "2026-07-20T10:00:00+02:00",
+                  "status": "confirmed",
+                  "customer_id": "customer-42",
+                  "held_until": null
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bookings/{id}/cancel": {
+      "post": {
+        "summary": "Cancel a booking",
+        "tags": [
+          "Bookings"
+        ],
+        "description": "Allowed from `held` and `confirmed`, and a no-op when the booking is already cancelled. The slots become available again immediately.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Booking id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "resource_id",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "customer_id",
+                    "held_until"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "resource_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "start_time": {
+                      "type": "string",
+                      "description": "ISO-8601 in the resource's timezone"
+                    },
+                    "end_time": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "`held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired`"
+                    },
+                    "customer_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Null when the booking was created without one."
+                    },
+                    "held_until": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Set on `held` and `expired` rows, null everywhere else."
+                    }
+                  }
+                },
+                "example": {
+                  "id": "9c1f0b7a-3d5e-4a2b-8f6c-1e4d7a9b2c30",
+                  "resource_id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                  "start_time": "2026-07-20T09:00:00+02:00",
+                  "end_time": "2026-07-20T10:00:00+02:00",
+                  "status": "confirmed",
+                  "customer_id": "customer-42",
+                  "held_until": null
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bookings/{id}/complete": {
+      "post": {
+        "summary": "Mark a booking as completed",
+        "tags": [
+          "Bookings"
+        ],
+        "description": "Allowed from `confirmed`. Completion is never automatic: an engine that completed bookings once their end time passed would make `no_show` unreachable, and only the caller can tell the two apart.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Booking id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "resource_id",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "customer_id",
+                    "held_until"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "resource_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "start_time": {
+                      "type": "string",
+                      "description": "ISO-8601 in the resource's timezone"
+                    },
+                    "end_time": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "`held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired`"
+                    },
+                    "customer_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Null when the booking was created without one."
+                    },
+                    "held_until": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Set on `held` and `expired` rows, null everywhere else."
+                    }
+                  }
+                },
+                "example": {
+                  "id": "9c1f0b7a-3d5e-4a2b-8f6c-1e4d7a9b2c30",
+                  "resource_id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                  "start_time": "2026-07-20T09:00:00+02:00",
+                  "end_time": "2026-07-20T10:00:00+02:00",
+                  "status": "confirmed",
+                  "customer_id": "customer-42",
+                  "held_until": null
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bookings/{id}/no-show": {
+      "post": {
+        "summary": "Mark a booking as a no-show",
+        "tags": [
+          "Bookings"
+        ],
+        "description": "Allowed from `confirmed`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Booking id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "resource_id",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "customer_id",
+                    "held_until"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "resource_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "start_time": {
+                      "type": "string",
+                      "description": "ISO-8601 in the resource's timezone"
+                    },
+                    "end_time": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "`held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired`"
+                    },
+                    "customer_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Null when the booking was created without one."
+                    },
+                    "held_until": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Set on `held` and `expired` rows, null everywhere else."
+                    }
+                  }
+                },
+                "example": {
+                  "id": "9c1f0b7a-3d5e-4a2b-8f6c-1e4d7a9b2c30",
+                  "resource_id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                  "start_time": "2026-07-20T09:00:00+02:00",
+                  "end_time": "2026-07-20T10:00:00+02:00",
+                  "status": "confirmed",
+                  "customer_id": "customer-42",
+                  "held_until": null
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bookings/{id}/reschedule": {
+      "post": {
+        "summary": "Move a booking to a different run of slots",
+        "tags": [
+          "Bookings"
+        ],
+        "description": "Allowed from `held` and `confirmed`, and the booking keeps its id and its status. The new interval is validated against the grid exactly as a new booking would be.\n\nIf the new slots are unavailable the original booking is left untouched — the check and the move happen in one transaction.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "start_time",
+                  "end_time"
+                ],
+                "properties": {
+                  "start_time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+                    "description": "ISO-8601 timestamp. An offset (`Z` or `±HH:MM`) is required — without one the instant is ambiguous. Must fall on a slot boundary — the same grid `GET /availability` returns.",
+                    "example": "2026-07-20T09:00:00+02:00"
+                  },
+                  "end_time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+                    "description": "ISO-8601 timestamp. An offset (`Z` or `±HH:MM`) is required — without one the instant is ambiguous. Must fall on a slot boundary.",
+                    "example": "2026-07-20T10:00:00+02:00"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "example": {
+                "start_time": "2026-07-20T11:00:00+02:00",
+                "end_time": "2026-07-20T12:00:00+02:00"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "Booking id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "resource_id",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "customer_id",
+                    "held_until"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "resource_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "start_time": {
+                      "type": "string",
+                      "description": "ISO-8601 in the resource's timezone"
+                    },
+                    "end_time": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "`held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired`"
+                    },
+                    "customer_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Null when the booking was created without one."
+                    },
+                    "held_until": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Set on `held` and `expired` rows, null everywhere else."
+                    }
+                  }
+                },
+                "example": {
+                  "id": "9c1f0b7a-3d5e-4a2b-8f6c-1e4d7a9b2c30",
+                  "resource_id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                  "start_time": "2026-07-20T09:00:00+02:00",
+                  "end_time": "2026-07-20T10:00:00+02:00",
+                  "status": "confirmed",
+                  "customer_id": "customer-42",
+                  "held_until": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bookings": {
+      "get": {
+        "summary": "List one customer's bookings across resources",
+        "tags": [
+          "Bookings"
+        ],
+        "description": "`customer_id` is optional. Omitted, the answer is every booking this tenant holds inside the window, across all of its resources — the owner's calendar. The window is still required and still bounded, which is what keeps the response finite.\n\n**The window is interpreted in UTC here**, not in a resource timezone — the results span resources in different zones and none of them outranks the others. Each returned timestamp is still rendered in its own resource zone.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "example": "customer-42",
+            "in": "query",
+            "name": "customer_id",
+            "required": false,
+            "description": "Narrows the list to one customer. Omitted, every booking of the tenant inside the window is returned — the owner's calendar. It was once required because the query would otherwise be bounded only by the date window; under a tenant filter it is bounded by the tenant and the window, the same bound every other listing has."
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "example": "2026-07-20",
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "description": "First date, inclusive, interpreted in UTC"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "example": "2026-07-27",
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "description": "Last date, exclusive, interpreted in UTC"
+          },
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "held"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "confirmed"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "cancelled"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "completed"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "no_show"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "expired"
+                  ]
+                }
+              ]
+            },
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Narrows the list to one status. Omitted, every status is returned."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "resource_id",
+                      "start_time",
+                      "end_time",
+                      "status",
+                      "customer_id",
+                      "held_until"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "resource_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "start_time": {
+                        "type": "string",
+                        "description": "ISO-8601 in the resource's timezone"
+                      },
+                      "end_time": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "description": "`held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired`"
+                      },
+                      "customer_id": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "Null when the booking was created without one."
+                      },
+                      "held_until": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "Set on `held` and `expired` rows, null everywhere else."
+                      }
+                    },
+                    "example": {
+                      "id": "9c1f0b7a-3d5e-4a2b-8f6c-1e4d7a9b2c30",
+                      "resource_id": "3f2b1c9e-6a1d-4f8b-9c2e-7d5a8b4e1f30",
+                      "start_time": "2026-07-20T09:00:00+02:00",
+                      "end_time": "2026-07-20T10:00:00+02:00",
+                      "status": "confirmed",
+                      "customer_id": "customer-42",
+                      "held_until": null
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Stable machine-readable code — branch on this, not on the message.",
+                      "example": "validation_error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Human-readable explanation. May change."
+                    },
+                    "details": {
+                      "description": "Context, when there is any."
+                    }
+                  }
+                },
+                "example": {
+                  "error": "schedule_overlap",
+                  "message": "Schedule rules on the same weekday must not overlap",
+                  "details": {
+                    "day_of_week": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Resources",
+      "description": "Bookable units and their scheduling parameters"
+    },
+    {
+      "name": "Schedule",
+      "description": "Regular weekly availability"
+    },
+    {
+      "name": "Exceptions",
+      "description": "Per-date overrides: a day off or altered hours"
+    },
+    {
+      "name": "Availability",
+      "description": "Computed slots, read-only"
+    },
+    {
+      "name": "Bookings",
+      "description": "Creating bookings and moving them through their lifecycle"
+    },
+    {
+      "name": "Health",
+      "description": "Liveness"
+    }
+  ]
+}

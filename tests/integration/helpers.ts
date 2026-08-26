@@ -42,7 +42,6 @@ export async function seedTenantId(name = 'test tenant'): Promise<string> {
 export async function buildTestApp(): Promise<FastifyInstance> {
   const app = await buildApp({
     config: {
-      databaseUrl: inject('databaseUrl'),
       port: 0,
       logLevel: 'silent',
       maxRangeDays: 366,

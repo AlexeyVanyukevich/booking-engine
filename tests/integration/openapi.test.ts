@@ -1,5 +1,7 @@
+import { readFile } from 'node:fs/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
+import { generateOpenApiDocument, serializeOpenApiDocument } from '../../src/shared/openapi.js'
 import { buildTestApp, closeTestDb, resetDbWithTenant, testAuthorization } from './helpers.js'
 
 let app: FastifyInstance
@@ -152,6 +154,36 @@ describe('OpenAPI document', () => {
         expect(declared).toContain(tag)
       }
     }
+  })
+})
+
+/**
+ * The document is also committed, so a consumer can generate its types without running the
+ * engine, and so a contract change appears in the diff of a pull request here — where the
+ * reviewer making it can see that a field disappeared — instead of surfacing later as a
+ * consumer's failing build. Both only hold while the file matches what the engine serves.
+ */
+describe('the committed openapi.json', () => {
+  const stale = 'openapi.json no longer matches the engine. Regenerate it: npm run openapi'
+
+  let committed: string
+  let generated: Record<string, unknown>
+
+  beforeAll(async () => {
+    committed = await readFile(new URL('../../openapi.json', import.meta.url), 'utf8')
+    generated = await generateOpenApiDocument()
+  })
+
+  it('describes the same API the engine serves', () => {
+    expect(JSON.parse(committed), stale).toEqual(generated)
+  })
+
+  /**
+   * Asserted separately from the contract above: this one fails when only the formatting has
+   * drifted, and a diff of two parsed documents would then report no difference at all.
+   */
+  it('is written exactly as the generator writes it', () => {
+    expect(committed, stale).toBe(serializeOpenApiDocument(generated))
   })
 })
 

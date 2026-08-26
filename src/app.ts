@@ -6,7 +6,7 @@ import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import { md } from './shared/docs.js'
 import { swaggerThemeCss } from './shared/swagger-theme.js'
 import type { Kysely } from 'kysely'
-import type { Config } from './config.js'
+import type { AppConfig } from './config.js'
 import type { Database } from './db/schema.js'
 import { availabilityRoutes } from './modules/availability/availability.routes.js'
 import { bookingRoutes } from './modules/bookings/booking.routes.js'
@@ -20,18 +20,18 @@ import { registerAuth } from './shared/auth.js'
 import { registerErrorHandler } from './shared/errors.js'
 
 export interface AppDeps {
-  config: Config
+  config: AppConfig
   db: Kysely<Database>
 }
 
 declare module 'fastify' {
   interface FastifyInstance {
     db: Kysely<Database>
-    config: Config
+    config: AppConfig
   }
 }
 
-function openapiDocument(config: Config) {
+function openapiDocument(config: AppConfig) {
   return {
     openapi: '3.1.0',
     info: {

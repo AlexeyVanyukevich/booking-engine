@@ -432,6 +432,14 @@ cmd_docs() {
   fi
 }
 
+# Rewrites the committed OpenAPI document from the route schemas. Needs no running engine and
+# no database: the generator walks the registered routes, and no handler is called.
+cmd_openapi() {
+  need_node; need_deps
+  npx tsx scripts/openapi.ts
+  ok "openapi.json is current — commit it with the schema change that moved it"
+}
+
 # Replays the test-case datasets against a live engine. No case is written here — they all
 # come from tests/fixtures/datasets/, the same source the automated suite reads, so editing
 # a dataset changes this run too.
@@ -461,6 +469,7 @@ ${BOLD}Run${OFF}
   reset        Wipe the database and start fresh
   logs [svc]   Follow logs, app by default
   docs         Open the interactive API reference in a browser
+  openapi      Rewrite the committed openapi.json from the route schemas
 
 ${BOLD}Verify${OFF}
   test         Run the full suite once
@@ -491,6 +500,7 @@ case "$SCENARIO" in
   logs)        cmd_logs "${2:-app}" ;;
   psql)        cmd_psql ;;
   docs)        cmd_docs ;;
+  openapi)     cmd_openapi ;;
   smoke)       cmd_smoke "${2:-}" ;;
   help|-h|--help) cmd_help ;;
   *)

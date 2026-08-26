@@ -215,6 +215,27 @@ Every route therefore carries `tags`, `summary` and a `response` map in its sche
 asserts this for all of them, and fails if a route is added without them or documented
 without existing.
 
+The document is also committed, as `openapi.json` at the repository root, and written only by
+`./run openapi`. A consumer generating its types then needs no running engine, and a contract
+change is visible in the diff of the pull request that makes it rather than in a consumer's
+build days later. `tests/integration/openapi.test.ts` asserts the file equals the live
+document, both as a contract and byte for byte, which is what makes regenerating it a step of
+changing a schema rather than an optional courtesy.
+
+The generator reads an **empty environment** rather than the ambient one. Two fields of the
+document are configured — the server URL carries `PORT`, and the range rule in the description
+carries `MAX_RANGE_DAYS` — so a developer with `PORT=3100` in their `.env` would otherwise
+produce a diff that says nothing about the API. It takes those defaults from `loadAppConfig`
+instead of restating them, so a changed default reaches the file without anyone remembering it
+should. `openapi.json` is in `.prettierignore`: Prettier packs short arrays onto one line,
+which would fight the generator and make every regeneration a diff.
+
+It also needs **no database**, which is why `AppConfig` exists: `buildApp` never connects — an
+entrypoint creates the handle and passes it in — so the connection string is not part of what
+the app reads, and `loadAppConfig` is the half of the loader that has defaults for everything.
+The route plugins are handed a database their repositories only store, because generating the
+document calls no handler and so builds no query.
+
 ---
 
 ## Configuration
