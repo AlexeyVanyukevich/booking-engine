@@ -280,132 +280,25 @@ Why not `duration % slot_duration == 0`, as an earlier draft of this document ha
 
 ## API Contracts
 
-### Resources
+Every path, parameter, request field, response field and status code is generated from the same TypeBox schemas the routes validate against. It lives in [openapi.json](../openapi.json), committed at the repository root and rendered at `/docs`.
 
-```
-GET    /resources?is_active=
-  → 200 [ { id, timezone, slot_duration, slot_anchor_time, capacity, concurrency_mode, is_active }, ... ]
+**It is deliberately not restated here.** A second description of the API is a copy, and a copy drifts — this section used to hold one, and it did. `tests/integration/openapi.test.ts` asserts the generated document against the running routes, which is a guarantee no prose can offer.
 
-POST   /resources
-  body: { timezone, slot_duration, slot_anchor_time?, capacity?, concurrency_mode }
-  → 201 { id, timezone, slot_duration, slot_anchor_time, capacity, concurrency_mode, is_active }
+What follows is what a schema cannot express: why a contract has the shape it does.
 
-GET    /resources/:id
-  → 200 { id, timezone, slot_duration, slot_anchor_time, capacity, concurrency_mode, is_active }
+**Resources.** `timezone` and `concurrency_mode` are absent from the `PATCH` body on purpose. Both are immutable, and an unknown field is rejected rather than ignored, so an attempt to change either fails loudly instead of appearing to succeed.
 
-PATCH  /resources/:id
-  body: { slot_duration?, slot_anchor_time?, capacity?, is_active? }
-  → 200 { id, ... }
+**Schedule.** `PUT .../schedule` replaces the whole schedule atomically. It is not a merge, and a rejected submission writes nothing.
 
-DELETE /resources/:id
-  → 204
-```
+**Schedule exceptions.** `PUT .../exceptions/:date` is idempotent by date — repeated calls overwrite. An exception replaces the weekly schedule for its date entirely and never merges with it.
 
-`timezone` and `concurrency_mode` are absent from the PATCH body on purpose: both are immutable, and an unknown field is rejected rather than ignored, so an attempt to change them fails loudly instead of appearing to succeed.
+**Availability.** One slot format for every kind of resource, hourly or daily or otherwise; timestamp and range formats follow [the shared conventions](conventions.md#time-and-date-representation). An inactive resource answers `200` with an empty slot list: it exists, so `404` would be wrong, but it is not bookable, so offering slots would mislead.
 
-### Schedule
+**Bookings.** Every lifecycle action answers the whole booking, in the same shape `GET /bookings/:id` returns. `idempotency_key` is never one of those fields: it is what the caller sent, not something the engine reports back. A request replaying a key answers `200` where the original answered `201`.
 
-```
-GET    /resources/:id/schedule
-  → 200 [ { id, day_of_week, start_time, end_time }, ... ]
+`reschedule` updates the times of the same row, keeping its id and its status. An exclusion constraint never compares a row with itself, so a single `UPDATE` is safe; if the new slots are unavailable the booking is left unchanged.
 
-PUT    /resources/:id/schedule
-  body: [ { day_of_week, start_time, end_time }, ... ]
-  → 200 [ ... ]
-```
-
-PUT replaces the entire schedule atomically.
-
-### Schedule Exceptions
-
-```
-GET    /resources/:id/exceptions?from=&to=
-  → 200 [ { id, date, start_time, end_time }, ... ]
-
-PUT    /resources/:id/exceptions/:date
-  body: { start_time, end_time }
-  → 200 { id, date, start_time, end_time }
-
-DELETE /resources/:id/exceptions/:date
-  → 204
-```
-
-PUT by date is idempotent — repeated calls overwrite.
-
-### Availability (read-only)
-
-```
-GET    /resources/:id/availability?from=2026-07-20&to=2026-07-22
-  → 200 {
-      slots: [
-        { start: "2026-07-20T09:00:00+02:00", end: "2026-07-20T10:00:00+02:00", available: true },
-        { start: "2026-07-20T10:00:00+02:00", end: "2026-07-20T11:00:00+02:00", available: false },
-        ...
-      ]
-    }
-```
-
-Unified format for all resource types — hourly, daily, or otherwise. Timestamp and range formats follow [the shared conventions](conventions.md#time-and-date-representation).
-
-An inactive resource answers with an empty slot list: it exists, so 404 would be wrong, but it is not bookable, so slots would mislead.
-
-### Bookings
-
-```
-POST   /resources/:id/bookings
-  body: {
-    customer_id?,
-    start_time,
-    end_time,
-    hold?: true,
-    hold_minutes?: 10,
-    idempotency_key?
-  }
-  → 201 { id, resource_id, start_time, end_time, status, customer_id, held_until }
-  → 200 the same body, when an idempotency key replays a booking already created
-  → 409 { error: "slot_unavailable" }
-  → 409 { error: "idempotency_key_reused" }
-
-GET    /bookings/:id
-  → 200 { id, resource_id, start_time, end_time, status, customer_id, held_until }
-  → 404 { error: "not_found" }
-
-POST   /bookings/:id/confirm
-  → 200 { id, status: "confirmed", ... }
-  → 410 { error: "hold_expired" }
-
-POST   /bookings/:id/cancel
-  → 200 { id, status: "cancelled", ... }
-
-POST   /bookings/:id/reschedule
-  body: { start_time, end_time }
-  → 200 { id, start_time, end_time, status, ... }
-  → 400 { error: "invalid_slot_boundary" }
-  → 404 { error: "not_found" }
-  → 409 { error: "slot_unavailable" }
-
-POST   /bookings/:id/complete
-  → 200 { id, status: "completed", ... }
-
-POST   /bookings/:id/no-show
-  → 200 { id, status: "no_show", ... }
-```
-
-Every one of these answers the whole booking — the seven fields `GET /bookings/:id` returns. `idempotency_key` is not among them: it is what the caller sent, never something the engine reports back.
-
-`reschedule` updates the times of the same row, keeping its id and status. An exclusion constraint never compares a row with itself, so a single `UPDATE` is safe; if the new slots are unavailable the booking is left unchanged.
-
-### Listing Bookings
-
-```
-GET    /resources/:id/bookings?from=&to=&status=
-  → 200 [ { id, resource_id, start_time, end_time, status, customer_id, held_until }, ... ]
-
-GET    /bookings?customer_id=&from=&to=&status=
-  → 200 [ ... ]
-```
-
-Two perspectives: by resource ("what's booked on this court") and by customer ("all my bookings").
+**Listing bookings.** Two perspectives: by resource ("what's booked on this court") and by customer ("all my bookings"). Both require a `from`/`to` window, which is what stands in for pagination — see [the limitations table](conventions.md#deliberate-limitations).
 
 ---
 
