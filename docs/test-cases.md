@@ -17,6 +17,13 @@ shared, it is repeated as a numbered step rather than assumed.
 The **Covered by** column names the automated test that asserts the same thing. Cases marked
 **gap** are not automated; they are the ones worth running by hand before a release.
 
+**Sections 1 to 11 cover specs 1 and 2 only.** Spec 4 — authentication, scopes, tenant
+isolation and the console — is not written up here yet. It is not untested: `auth.test.ts`,
+`tenants.test.ts`, `isolation.test.ts` and `console.test.ts` carry it, and `tests/ui/`
+exercises the console in a real browser under `./run test:ui`. What is missing is the
+hand-runnable form, so treat the sections below as covering the engine's scheduling behaviour
+rather than all of it.
+
 Where the column names a dataset — `resources.test.ts ← acceptedResources` — that dataset is
 also replayed against a live engine by `./run smoke`. Adding a row there extends the test
 suite and the smoke run at once; neither runner holds a copy of the case.
@@ -24,9 +31,22 @@ suite and the smoke run at once; neither runner holds a copy of the case.
 ## Environment
 
 ```bash
-./run up                              # engine on :3000, schema applied
+./run up                              # engine on :3000, console on :3001, schema applied
 BASE=http://localhost:3000
 ```
+
+Every case below `/health` needs a key. Open the console at **http://127.0.0.1:3001**, create
+a tenant, issue a key with the **Back office** preset — every scope, which is what a test pass
+needs — and copy it; it is shown once.
+
+```bash
+KEY=bk_live_...
+AUTH="authorization: Bearer $KEY"
+```
+
+Without that header the engine answers `401 unauthorized`, whatever the case was testing. A
+case that expects some other status and gets a 401 has failed at the setup, not at the
+behaviour.
 
 For running a case by hand, the interactive reference at `http://localhost:3000/docs`
 (`./run docs`) is usually faster than curl: every endpoint has a **Try it out** button with
@@ -36,7 +56,7 @@ into a bug report.
 A helper used throughout, so cases stay readable:
 
 ```bash
-mk() { curl -s -X POST $BASE/resources -H 'content-type: application/json' -d "$1" \
+mk() { curl -s -X POST $BASE/resources -H "$AUTH" -H 'content-type: application/json' -d "$1" \
        | sed -E 's/.*"id":"([^"]+)".*/\1/'; }
 ```
 
@@ -47,12 +67,12 @@ fresh resource per case — every case below does the latter, so a reset is rare
 
 ## 1. Health
 
-| ID        | Case                      | Steps                                                                                         | Expected                                                                                                                                                                                     | Covered by       |
-| --------- | ------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| TC-HLT-01 | Liveness                  | `curl $BASE/health`                                                                           | `200 {"status":"ok"}`                                                                                                                                                                        | `health.test.ts` |
-| TC-HLT-02 | Repeatable, stateless     | Call `/health` three times                                                                    | `200` each time, identical body                                                                                                                                                              | `health.test.ts` |
-| TC-HLT-03 | JSON content type         | `curl -i $BASE/health`                                                                        | `content-type: application/json`                                                                                                                                                             | `health.test.ts` |
-| TC-HLT-04 | Liveness is not readiness | 1. `docker compose stop db`<br>2. `curl $BASE/health`<br>3. `curl $BASE/resources/<any uuid>` | Step 2 still returns `200 {"status":"ok"}` while step 3 returns `500`. **Verified by hand.** The probe reports that the process is alive, not that the database is reachable — see TC-GAP-03 | **gap**          |
+| ID        | Case                      | Steps                                                                                                    | Expected                                                                                                                                                                                                                                                             | Covered by       |
+| --------- | ------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| TC-HLT-01 | Liveness                  | `curl $BASE/health`                                                                                      | `200 {"status":"ok"}`                                                                                                                                                                                                                                                | `health.test.ts` |
+| TC-HLT-02 | Repeatable, stateless     | Call `/health` three times                                                                               | `200` each time, identical body                                                                                                                                                                                                                                      | `health.test.ts` |
+| TC-HLT-03 | JSON content type         | `curl -i $BASE/health`                                                                                   | `content-type: application/json`                                                                                                                                                                                                                                     | `health.test.ts` |
+| TC-HLT-04 | Liveness is not readiness | 1. `docker compose stop db`<br>2. `curl $BASE/health`<br>3. `curl -H "$AUTH" $BASE/resources/<any uuid>` | Step 2 still returns `200 {"status":"ok"}` while step 3 returns `500` — the key lookup is itself a query, so it fails before the handler does. **Verified by hand.** The probe reports that the process is alive, not that the database is reachable — see TC-GAP-03 | **gap**          |
 
 ---
 
@@ -338,22 +358,22 @@ Transition dates come from the tz database, not from memory — see
 
 ### Range and state
 
-| ID         | Case                         | Steps                                                            | Expected                                                                                                          | Covered by             |
-| ---------- | ---------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| TC-AVL-S01 | Half-open range              | Windows Mon and Tue, query 20th → 21st                           | Only Monday's slot; nothing lands on the `to` date                                                                | `availability.test.ts` |
-| TC-AVL-S02 | Inactive resource            | 1. Schedule a resource<br>2. `PATCH is_active:false`<br>3. Query | `200 {"slots":[]}` — not a 404: it exists but is not bookable                                                     | same                   |
-| TC-AVL-S03 | Reactivation                 | Continue TC-AVL-S02 with `is_active:true`                        | Slots return                                                                                                      | same                   |
-| TC-AVL-S04 | Schedule change is immediate | Query, change the schedule, query again                          | Second result reflects the new schedule; no caching                                                               | same                   |
-| TC-AVL-S05 | Idempotent                   | Query the same range twice                                       | Identical bodies                                                                                                  | same                   |
-| TC-AVL-S06 | Resources are independent    | Schedule A, query B                                              | `[]`                                                                                                              | same                   |
-| TC-AVL-S07 | Maximum width range          | `P1D` every day, query a full year                               | `200`, 365 slots                                                                                                  | same                   |
-| TC-AVL-S08 | Inverted range               | `from=21&to=20`                                                  | `400 invalid_range`                                                                                               | same                   |
-| TC-AVL-S09 | Equal bounds                 | `from=20&to=20`                                                  | `400 invalid_range`                                                                                               | same                   |
-| TC-AVL-S10 | Over-wide range              | two years                                                        | `400 invalid_range`                                                                                               | same                   |
-| TC-AVL-S11 | Malformed date               | `20-07-2026`, `tomorrow`, `2026-07`                              | `400`                                                                                                             | same                   |
-| TC-AVL-S12 | Unknown resource             | random uuid                                                      | `404 not_found`                                                                                                   | same                   |
-| TC-AVL-S13 | `available` is always true   | Any successful query                                             | Every slot has `available: true` — bookings arrive in spec 2, the field ships now so the contract does not change | same                   |
-| TC-AVL-S14 | Ordering and well-formedness | Any successful query                                             | Slots ascending by `start`; every `end` strictly after its `start`                                                | same                   |
+| ID         | Case                            | Steps                                                            | Expected                                                                                               | Covered by             |
+| ---------- | ------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------- |
+| TC-AVL-S01 | Half-open range                 | Windows Mon and Tue, query 20th → 21st                           | Only Monday's slot; nothing lands on the `to` date                                                     | `availability.test.ts` |
+| TC-AVL-S02 | Inactive resource               | 1. Schedule a resource<br>2. `PATCH is_active:false`<br>3. Query | `200 {"slots":[]}` — not a 404: it exists but is not bookable                                          | same                   |
+| TC-AVL-S03 | Reactivation                    | Continue TC-AVL-S02 with `is_active:true`                        | Slots return                                                                                           | same                   |
+| TC-AVL-S04 | Schedule change is immediate    | Query, change the schedule, query again                          | Second result reflects the new schedule; no caching                                                    | same                   |
+| TC-AVL-S05 | Idempotent                      | Query the same range twice                                       | Identical bodies                                                                                       | same                   |
+| TC-AVL-S06 | Resources are independent       | Schedule A, query B                                              | `[]`                                                                                                   | same                   |
+| TC-AVL-S07 | Maximum width range             | `P1D` every day, query a full year                               | `200`, 365 slots                                                                                       | same                   |
+| TC-AVL-S08 | Inverted range                  | `from=21&to=20`                                                  | `400 invalid_range`                                                                                    | same                   |
+| TC-AVL-S09 | Equal bounds                    | `from=20&to=20`                                                  | `400 invalid_range`                                                                                    | same                   |
+| TC-AVL-S10 | Over-wide range                 | two years                                                        | `400 invalid_range`                                                                                    | same                   |
+| TC-AVL-S11 | Malformed date                  | `20-07-2026`, `tomorrow`, `2026-07`                              | `400`                                                                                                  | same                   |
+| TC-AVL-S12 | Unknown resource                | random uuid                                                      | `404 not_found`                                                                                        | same                   |
+| TC-AVL-S13 | `available` with nothing booked | Any successful query on a resource with no bookings              | Every slot has `available: true`. What makes it false is in [§7.9](#79-availability-reflects-bookings) | same                   |
+| TC-AVL-S14 | Ordering and well-formedness    | Any successful query                                             | Slots ascending by `start`; every `end` strictly after its `start`                                     | same                   |
 
 ---
 
@@ -540,7 +560,7 @@ Verified against the database directly rather than through HTTP.
 
 | ID       | Case                           | Expected                                                                                                                                                                        | Covered by           |
 | -------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| TC-DB-01 | Tables exist                   | `resources`, `schedule`, `schedule_exceptions`                                                                                                                                  | `migrations.test.ts` |
+| TC-DB-01 | Tables exist                   | `resources`, `schedule`, `schedule_exceptions`, `bookings`, `tenants`, `api_keys`                                                                                               | `migrations.test.ts` |
 | TC-DB-02 | Column types                   | `slot_duration` is `interval`; `slot_anchor_time` and schedule times are `time without time zone`; `date` is `date`; `created_at` is `timestamptz`; `day_of_week` is `smallint` | same                 |
 | TC-DB-03 | Duration round-trip            | Every accepted duration reads back in canonical form                                                                                                                            | same                 |
 | TC-DB-04 | `P1D` ≠ `PT23H59M`             | Stored distinctly                                                                                                                                                               | same                 |
@@ -607,11 +627,11 @@ Full chains, run in order, as an acceptance pass before a release.
 Not covered by any automated test. Run these by hand, or automate them when the cost of a
 regression justifies it.
 
-| ID        | Gap                                                      | Why it matters                                                                                                                                                   |
-| --------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| TC-GAP-01 | The `down` migration is never executed                   | `001_initial.ts` defines `down`, and nothing proves it works. A rollback would be discovered to be broken exactly when it is needed                              |
-| TC-GAP-02 | Migrations are never run twice against the same database | `migrateToLatest` should be a no-op on an up-to-date schema. The suite applies them once, in `globalSetup`                                                       |
-| TC-GAP-03 | `/health` does not check the database                    | It is a liveness probe, not readiness. An orchestrator using it to decide whether to route traffic would send requests to an instance that cannot reach Postgres |
-| TC-GAP-04 | No named end-to-end journeys                             | TC-E2E-01 to 03 pass step by step but are not asserted as a chain, so an interaction bug between steps could survive                                             |
-| TC-GAP-05 | The container image is not exercised by tests            | The suite runs the TypeScript sources; the compiled `dist/` in the image is verified only by starting it manually                                                |
-| TC-GAP-06 | No load or concurrency testing                           | Meaningless before bookings exist, but the availability endpoint's 366-day ceiling has never been measured under load                                            |
+| ID        | Gap                                                      | Why it matters                                                                                                                                                                                                                                             |
+| --------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TC-GAP-01 | No `down` migration is ever executed                     | All three migrations define `down`, and nothing runs any of them. `003_tenancy.ts` even refuses its own reversal when a booking has a null `customer_id` — a branch no test reaches. A rollback would be discovered to be broken exactly when it is needed |
+| TC-GAP-02 | Migrations are never run twice against the same database | `migrateToLatest` should be a no-op on an up-to-date schema. The suite applies them once, in `globalSetup`                                                                                                                                                 |
+| TC-GAP-03 | `/health` does not check the database                    | It is a liveness probe, not readiness. An orchestrator using it to decide whether to route traffic would send requests to an instance that cannot reach Postgres                                                                                           |
+| TC-GAP-04 | No named end-to-end journeys                             | TC-E2E-01 to 03 pass step by step but are not asserted as a chain, so an interaction bug between steps could survive                                                                                                                                       |
+| TC-GAP-05 | The container image is not exercised by tests            | The suite runs the TypeScript sources; the compiled `dist/` in the image is verified only by starting it manually                                                                                                                                          |
+| TC-GAP-06 | No load testing                                          | Contention is covered case by case — TC-BK-O09, TC-BK-I09, TC-BK-L07 — but nothing measures throughput. The availability endpoint's 366-day ceiling has never been timed under load                                                                        |
