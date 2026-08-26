@@ -17,7 +17,7 @@ import { scheduleRoutes } from './modules/schedule/schedule.routes.js'
 import { TenantRepository } from './modules/tenants/tenant.repository.js'
 import { TenantService } from './modules/tenants/tenant.service.js'
 import { registerAuth } from './shared/auth.js'
-import { registerErrorHandler } from './shared/errors.js'
+import { RATE_LIMITED_CODE, registerErrorHandler } from './shared/errors.js'
 
 export interface AppDeps {
   config: AppConfig
@@ -95,7 +95,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     timeWindow: '1 minute',
     keyGenerator: (request) => request.headers.authorization ?? request.ip,
     errorResponseBuilder: () => ({
-      error: 'rate_limited',
+      error: RATE_LIMITED_CODE,
       message: 'Too many requests; slow down and retry',
     }),
   })

@@ -150,7 +150,12 @@ export function rethrowContention(error: unknown, what: string): never {
   throw error
 }
 
-const CLIENT_ERROR_CODES: Record<number, string> = {
+/**
+ * Codes the framework's own 4xx are translated into, so a caller's mistake never surfaces as
+ * `internal_error`. Exported because it is half of what the engine can emit: the error table in
+ * `docs/conventions.md` is asserted against this map and the `AppError` subclasses together.
+ */
+export const CLIENT_ERROR_CODES: Record<number, string> = {
   400: 'validation_error',
   404: 'not_found',
   405: 'method_not_allowed',
@@ -159,8 +164,16 @@ const CLIENT_ERROR_CODES: Record<number, string> = {
   415: 'unsupported_media_type',
 }
 
+/** Any other framework 4xx. The one code with no fixed status, hence no row of its own. */
+export const FALLBACK_CLIENT_ERROR_CODE = 'bad_request'
+
+export const INTERNAL_ERROR_CODE = 'internal_error'
+
+/** Built by the rate-limit plugin in `src/app.ts` rather than thrown, but emitted all the same. */
+export const RATE_LIMITED_CODE = 'rate_limited'
+
 function clientErrorCode(statusCode: number): string {
-  return CLIENT_ERROR_CODES[statusCode] ?? 'bad_request'
+  return CLIENT_ERROR_CODES[statusCode] ?? FALLBACK_CLIENT_ERROR_CODE
 }
 
 export function registerErrorHandler(app: FastifyInstance): void {
@@ -199,7 +212,7 @@ export function registerErrorHandler(app: FastifyInstance): void {
     // Anything unexpected: log with the stack, reveal nothing. Database structure must
     // never reach the client through error text.
     request.log.error({ err: error }, 'unhandled error')
-    void reply.status(500).send({ error: 'internal_error', message: 'Internal server error' })
+    void reply.status(500).send({ error: INTERNAL_ERROR_CODE, message: 'Internal server error' })
   })
 
   app.setNotFoundHandler((_request, reply) => {
