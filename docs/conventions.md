@@ -130,12 +130,15 @@ Every error response has the same shape:
 | `forbidden_scope`              | 403    | Valid key, but it does not hold the scope the route requires  |
 | `forbidden_origin`             | 403    | A console write whose `Origin` is not the console itself      |
 | `not_found`                    | 404    | No such resource or booking, or no such route                 |
+| `method_not_allowed`           | 405    | The framework matched the path but not the method             |
+| `not_acceptable`               | 406    | The framework could not satisfy the `Accept` header           |
 | `slot_unavailable`             | 409    | The slots exist and are offered, but capacity is taken        |
 | `resource_inactive`            | 409    | The resource exists but `is_active` is false                  |
 | `invalid_state_transition`     | 409    | The requested transition is not legal from the current status |
 | `resource_has_bookings`        | 409    | `DELETE /resources/:id` with bookings on record               |
 | `idempotency_key_reused`       | 409    | Same key, different request body                              |
 | `hold_expired`                 | 410    | `confirm` on a hold whose `held_until` has passed             |
+| `payload_too_large`            | 413    | Body beyond Fastify's body limit                              |
 | `unsupported_media_type`       | 415    | Body sent with a content type the route cannot parse          |
 | `rate_limited`                 | 429    | The per-key limit for this minute is used up                  |
 | `internal_error`               | 500    | Anything unexpected                                           |
@@ -189,8 +192,12 @@ The engine translates and does not retry: retry machinery was deliberately rejec
 decision to send the request again stays with the caller.
 
 Framework-level 4xx are translated into this shape too — a caller's mistake must never
-surface as `internal_error`. Unexpected exceptions are logged with a stack trace and returned
-bare: database structure never reaches the client through error text.
+surface as `internal_error`. Four of the rows above exist only for that translation and are
+never thrown by a handler: `method_not_allowed`, `not_acceptable`, `payload_too_large` and
+`unsupported_media_type`. A framework 400 reuses `validation_error` and a framework 404 reuses
+`not_found`; any other 4xx becomes `bad_request`, which is the one code with no fixed status of
+its own. Unexpected exceptions are logged with a stack trace and returned bare: database
+structure never reaches the client through error text.
 
 Unknown fields in a request body are **rejected**, not ignored. An attempt to patch an
 immutable field therefore fails loudly instead of appearing to succeed.
@@ -235,6 +242,22 @@ entrypoint creates the handle and passes it in — so the connection string is n
 the app reads, and `loadAppConfig` is the half of the loader that has defaults for everything.
 The route plugins are handed a database their repositories only store, because generating the
 document calls no handler and so builds no query.
+
+### The tables that cannot be generated are asserted instead
+
+Three tables restate something the code already states exactly once, and cannot be generated
+away without losing the prose they sit in: the configuration table below, the error table
+above, and the endpoint table in the README.
+
+`tests/unit/documented-tables.test.ts` reads them out of the Markdown and diffs them against
+`loadAppConfig`, the `AppError` subclasses together with `CLIENT_ERROR_CODES`, and
+`openapi.json`. A variable added without a row, a row whose default no longer matches, an
+error code nothing documents, an endpoint added without a line — each fails the suite instead
+of waiting to be noticed. Two of the three had already drifted when the tests were written.
+
+That is the rule at the top of this document made mechanical: if something is spelled out
+twice, delete the copy, and where the copy has to stay, make it checkable. Prose that can be
+neither is proof-read by hand, which is to say not at all.
 
 ---
 
@@ -283,16 +306,23 @@ serialization matters — is in [the spec that made them](superpowers/specs/2026
 
 ## Code layout
 
-Modules are organised by entity, and each splits into three files:
+Modules are organised by entity, and each splits into four files:
 
 ```
 src/modules/<entity>/
-  <entity>.routes.ts       HTTP layer and TypeBox schemas
+  <entity>.routes.ts       HTTP layer: the route table and its hooks
+  <entity>.schemas.ts      TypeBox schemas, shared between validation and the document
   <entity>.service.ts      business rules and validation
   <entity>.repository.ts   SQL
 ```
 
-Cross-cutting helpers live in `src/shared/`, database wiring in `src/db/`.
+Not every module needs all four: `availability` computes rather than stores and has no
+repository, and `health` is routes alone. A module may add a file for a rule that is worth
+isolating — `slot-generator.ts`, `occupancy.ts`, `booking-validator.ts` are each a pure
+function pulled out of a service for the reasons below.
+
+Cross-cutting helpers live in `src/shared/`, database wiring in `src/db/`. Entrypoints sit at
+`src/`: `server.ts` for the API, `console.ts` for the key console, `worker.ts` for the sweep.
 
 **One structural rule is absolute:** `src/modules/availability/slot-generator.ts` must not
 import anything from `src/db/`. It takes windows, a timezone, a duration and an anchor, and
@@ -400,8 +430,9 @@ Recorded so they are not rediscovered as bugs.
 | No schedule history                                 | Audit trails belong above the engine                                                                                                                                                                                                                                                                                         | New table, if ever needed                                                                |
 | Slot grid anchored per window, not globally         | Two windows on a day each start their own grid, so 09:00–12:00 and 12:30–17:00 are offset by 30 minutes. The alternative silently drops the first half hour of the second window                                                                                                                                             | Intentional; not planned to change                                                       |
 | The console has no authentication of its own        | Spec 4 authenticated the data plane with API keys; the console that issues them did not follow, because it binds to `127.0.0.1` and reaching that port already means holding the machine. The bind address is hard-coded rather than configurable, which makes that structural instead of a promise                          | A session or an operator identity, once the console is not the operator's own machine    |
-| Bookings in the past are accepted                   | The engine reads no clock; availability offers past slots, and "anything offered is bookable" follows. Back-dated entry is legitimate                                                                                                                                                                                        | A validation rule, if a domain ever wants it                                             |
+| Bookings in the past are accepted                   | Nothing on the booking path reads the clock — only hold expiry does — so availability offers past slots, and "anything offered is bookable" follows. Back-dated entry is legitimate                                                                                                                                          | A validation rule, if a domain ever wants it                                             |
 | A schedule edit may leave bookings off the new grid | Refusing it would freeze a schedule around a single distant booking, and the remedy is a business decision. Such a booking is not loose: occupancy is counted as overlap per slot, so it still occupies every slot of the new grid it touches. The resource can therefore look fuller than the domain intends, never emptier | A conflict query on `PUT`, and a policy to apply                                         |
 | `shared` serializes writes per resource             | One row lock is the whole mechanism; bookings for one resource on unrelated dates still queue behind each other                                                                                                                                                                                                              | SERIALIZABLE plus a retry loop; schema unchanged                                         |
-| No pagination on listings                           | Both listings are bounded by a required window of at most `MAX_RANGE_DAYS`, as everywhere else in the engine                                                                                                                                                                                                                 | Keyset pagination on `(start_time, id)`                                                  |
+| No pagination on listings                           | Both booking listings are bounded by a required window of at most `MAX_RANGE_DAYS`, as everywhere else in the engine. `GET /resources` is the exception: it has no window to bound it and returns every resource the tenant owns                                                                                             | Keyset pagination on `(start_time, id)`; for resources, on `(created_at, id)`            |
 | No automatic completion                             | An automatic transition at `end_time` would make `no_show` unreachable                                                                                                                                                                                                                                                       | Not planned; the distinction is the caller's                                             |
+| The rate limit is per process, not per cluster      | `@fastify/rate-limit` counts in memory, so `RATE_LIMIT_PER_MINUTE` is what one API process allows a key. Two instances behind a balancer allow twice that. It exists so one tenant cannot exhaust the engine by accident, and for that a per-process bound is enough                                                         | A shared store — the plugin takes a Redis client                                         |

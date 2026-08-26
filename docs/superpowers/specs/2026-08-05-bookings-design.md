@@ -675,7 +675,12 @@ The cheap guard, if spec 3 wants one before it is ready to implement pooling pro
 make the mode branch in `BookingService.create` exhaustive — a `switch` that throws on an
 unhandled mode rather than an `if` that falls through to "no lock, no count".
 
-Added to [conventions.md](../../conventions.md#deliberate-limitations) alongside spec 1's.
+---
+
+## 13. Known limitations
+
+Every limitation this spec accepted, with its reasoning and the cost to lift it. Added to
+[conventions.md](../../conventions.md#deliberate-limitations) alongside spec 1's.
 
 | Limitation                                   | Why                                                                                                                                   | Cost to lift                                     |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |

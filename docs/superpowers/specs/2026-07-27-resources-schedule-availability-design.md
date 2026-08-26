@@ -141,7 +141,7 @@ An exception **replaces** the weekly schedule for that date entirely; it never m
 
 ### 4.4 Note for spec 2
 
-The exclusion constraint on `bookings` requires the `btree_gist` extension (to combine `uuid WITH =` and `tstzrange WITH &&` in one GiST index). It is not needed in this spec, but the migration in spec 2 must create it.
+The exclusion constraint on `bookings` requires the `btree_gist` extension (to combine `uuid WITH =` and `tstzrange WITH &&` in one GiST index). It is not needed in this spec, but the migration in spec 2 must create it. — _Done:_ `002_bookings.ts` creates it as its first statement.
 
 ---
 

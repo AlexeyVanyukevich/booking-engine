@@ -377,6 +377,14 @@ first request logs a live credential in plain text.
 to the source IP for unauthenticated requests, at `RATE_LIMIT_PER_MINUTE` (default 600). A
 tenant cannot exhaust the engine for the others by accident.
 
+_As built:_ the generator returns the raw `Authorization` header, not the key id. The rate
+limiter runs before the authentication hook, so there is no resolved key to name yet — and
+reordering them would mean a database round trip for requests the limiter is about to reject.
+The header identifies the caller just as well: one key is one header value, so the buckets
+come out the same, and an unauthenticated request still falls back to the IP as designed. The
+limit is also per process, because the plugin counts in memory — see
+[conventions.md](../../conventions.md#deliberate-limitations).
+
 ---
 
 ## 5. Tenant scoping

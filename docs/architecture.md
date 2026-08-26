@@ -6,7 +6,7 @@ A domain-agnostic booking engine that operates on abstractions: resource, schedu
 
 ## Status
 
-This document describes the whole system. It is delivered in three slices, each with its own spec in [superpowers/specs/](superpowers/specs/):
+This document describes the whole system. It is delivered in slices, each with its own spec in [superpowers/specs/](superpowers/specs/):
 
 | Slice | Content                                                              | State                               |
 | ----- | -------------------------------------------------------------------- | ----------------------------------- |
@@ -36,6 +36,41 @@ that is safe only because the port is unreachable from elsewhere, which is why t
 is hard-coded rather than configurable.
 
 ## Data Model
+
+### Tenant
+
+The owner of every other row. Created only from the console; the engine never creates one.
+
+| Column     | Type                  | Description                                                                 |
+| ---------- | --------------------- | --------------------------------------------------------------------------- |
+| id         | UUID, PK              |                                                                             |
+| name       | text, NOT NULL        | A human label for the console. CHECKed non-blank; the engine never reads it |
+| is_active  | boolean, default true | False retires every key the tenant owns at once, without revoking each      |
+| created_at | timestamptz, `now()`  |                                                                             |
+
+The owned tables reference this with `ON DELETE RESTRICT`. A tenant with rows cannot be deleted out from under them, and deactivating is the reversible way to switch one off.
+
+### ApiKey
+
+One key belongs to one tenant and carries a set of scopes. The secret half is never stored.
+
+| Column       | Type                   | Description                                                                        |
+| ------------ | ---------------------- | ---------------------------------------------------------------------------------- |
+| id           | UUID, PK               |                                                                                    |
+| tenant_id    | UUID, FK → Tenant      | `ON DELETE CASCADE` — a key has no meaning without its tenant                      |
+| name         | text, NOT NULL         | What the key is for, shown in the console. CHECKed non-blank                       |
+| key_prefix   | text, NOT NULL, UNIQUE | The lookup handle, stored in the clear                                             |
+| key_hash     | text, NOT NULL         | SHA-256 of the secret half                                                         |
+| scopes       | text[], NOT NULL       | CHECKed non-empty and contained in the known set — a second copy of the vocabulary |
+| created_at   | timestamptz, `now()`   |                                                                                    |
+| last_used_at | timestamptz            | Stamped at most once a minute: a liveness signal, not a request count              |
+| revoked_at   | timestamptz            | Set rather than deleted, so the audit trail survives the key                       |
+
+A key is `bk_live_` followed by an 8-character prefix and a 43-character secret. The prefix is what the lookup index finds; the secret is compared against `key_hash` in constant time and appears in one HTTP response, ever.
+
+**SHA-256 rather than argon2 or bcrypt.** Those are slow on purpose because human passwords have little entropy and must survive an offline attack. This secret is 43 base62 characters from a CSPRNG — roughly 256 bits — so there is no search to slow down, and a per-request argon2 would add ~100 ms to every call to defend against an attack that cannot succeed either way.
+
+The lookup index is partial, `WHERE revoked_at IS NULL`: authentication only ever asks for live keys, and revoked ones accumulate forever.
 
 ### Resource
 
@@ -128,17 +163,20 @@ Applied to this model: `timezone` and `concurrency_mode` are immutable after cre
 
 A booking record. No domain fields (notes, guest count, etc.) — those belong to the domain layer.
 
-| Column      | Type                       | Description                                                              |
-| ----------- | -------------------------- | ------------------------------------------------------------------------ |
-| id          | UUID, PK                   |                                                                          |
-| tenant_id   | UUID, FK → Tenant          | Composite FK with `resource_id`                                          |
-| resource_id | UUID, FK → Resource        |                                                                          |
-| start_time  | timestamptz, NOT NULL      |                                                                          |
-| end_time    | timestamptz, NOT NULL      |                                                                          |
-| status      | text, NOT NULL             | `held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired` |
-| customer_id | text                       | Opaque external identifier. Optional — see below                         |
-| held_until  | timestamptz                | Set on `held` and `expired`; NULL otherwise                              |
-| created_at  | timestamptz, default now() |                                                                          |
+| Column           | Type                       | Description                                                              |
+| ---------------- | -------------------------- | ------------------------------------------------------------------------ |
+| id               | UUID, PK                   |                                                                          |
+| tenant_id        | UUID, FK → Tenant          | Composite FK with `resource_id`                                          |
+| resource_id      | UUID, FK → Resource        |                                                                          |
+| start_time       | timestamptz, NOT NULL      |                                                                          |
+| end_time         | timestamptz, NOT NULL      |                                                                          |
+| status           | text, NOT NULL             | `held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired` |
+| customer_id      | text                       | Opaque external identifier. Optional — see below                         |
+| concurrency_mode | text, NOT NULL             | Copied from the resource, because the exclusion predicate cannot read it |
+| held_until       | timestamptz                | Set on `held` and `expired`; NULL otherwise                              |
+| idempotency_key  | text                       | Optional; unique per `(resource_id, idempotency_key)`. Never returned    |
+| created_at       | timestamptz, default now() |                                                                          |
+| updated_at       | timestamptz, default now() |                                                                          |
 
 `customer_id` is optional because a caller keeping its own guest records has no need for the
 engine to hold one. It survived rather than being dropped because the engine **queries** by it:
@@ -154,15 +192,17 @@ ALTER TABLE bookings
     GENERATED ALWAYS AS (tstzrange(start_time, end_time)) STORED;
 
 ALTER TABLE bookings
-  ADD CONSTRAINT no_overlap
+  ADD CONSTRAINT bookings_no_overlap
     EXCLUDE USING gist (
       resource_id WITH =,
       time_range  WITH &&
     )
-    WHERE (status IN ('held', 'confirmed'));
+    WHERE (status IN ('held', 'confirmed') AND concurrency_mode = 'exclusive');
 ```
 
-For `capacity > 1`: use `SELECT COUNT(*) ... FOR UPDATE` inside a transaction.
+The mode is part of the predicate, not just of the heading: without it the second overlapping booking on a `shared` resource would be refused here and the mode would be unreachable. The predicate cannot read `resources`, which is why the mode is copied onto the booking — it is immutable on the resource, so the copy cannot drift.
+
+For `capacity > 1` the invariant is a count rather than disjointness, so it is carried by `SELECT COUNT(*)` under the resource row lock inside a transaction — see [the concurrency rules](conventions.md#concurrency).
 
 ---
 
@@ -207,7 +247,7 @@ getAvailability(resource, from, to):
   5. Return list of slots with available flag
 ```
 
-Step 3 arrives with spec 2; until then every returned slot is free, and the `available` flag ships already so the contract does not change when bookings land.
+Step 3 arrived with spec 2. Occupancy is counted **per slot**, and a booking counts against a slot when it overlaps it: a slot is `available: false` once `capacity` active bookings overlap it, and one multi-slot booking marks every slot it touches.
 
 All local-time arithmetic runs through a timezone-aware library with the resource's zone, which is what makes a `P1D` slot span 23, 24 or 25 real hours across a transition while still running from local anchor to local anchor. A trailing remainder shorter than one slot is dropped: a 09:00–17:30 window with a one-hour slot yields eight slots.
 
@@ -240,127 +280,25 @@ Why not `duration % slot_duration == 0`, as an earlier draft of this document ha
 
 ## API Contracts
 
-### Resources
+Every path, parameter, request field, response field and status code is generated from the same TypeBox schemas the routes validate against. It lives in [openapi.json](../openapi.json), committed at the repository root and rendered at `/docs`.
 
-```
-GET    /resources?is_active=
-  → 200 [ { id, timezone, slot_duration, slot_anchor_time, capacity, concurrency_mode, is_active }, ... ]
+**It is deliberately not restated here.** A second description of the API is a copy, and a copy drifts — this section used to hold one, and it did. `tests/integration/openapi.test.ts` asserts the generated document against the running routes, which is a guarantee no prose can offer.
 
-POST   /resources
-  body: { timezone, slot_duration, slot_anchor_time?, capacity?, concurrency_mode }
-  → 201 { id, timezone, slot_duration, slot_anchor_time, capacity, concurrency_mode, is_active }
+What follows is what a schema cannot express: why a contract has the shape it does.
 
-GET    /resources/:id
-  → 200 { id, timezone, slot_duration, slot_anchor_time, capacity, concurrency_mode, is_active }
+**Resources.** `timezone` and `concurrency_mode` are absent from the `PATCH` body on purpose. Both are immutable, and an unknown field is rejected rather than ignored, so an attempt to change either fails loudly instead of appearing to succeed.
 
-PATCH  /resources/:id
-  body: { slot_duration?, slot_anchor_time?, capacity?, is_active? }
-  → 200 { id, ... }
+**Schedule.** `PUT .../schedule` replaces the whole schedule atomically. It is not a merge, and a rejected submission writes nothing.
 
-DELETE /resources/:id
-  → 204
-```
+**Schedule exceptions.** `PUT .../exceptions/:date` is idempotent by date — repeated calls overwrite. An exception replaces the weekly schedule for its date entirely and never merges with it.
 
-`timezone` and `concurrency_mode` are absent from the PATCH body on purpose: both are immutable, and an unknown field is rejected rather than ignored, so an attempt to change them fails loudly instead of appearing to succeed.
+**Availability.** One slot format for every kind of resource, hourly or daily or otherwise; timestamp and range formats follow [the shared conventions](conventions.md#time-and-date-representation). An inactive resource answers `200` with an empty slot list: it exists, so `404` would be wrong, but it is not bookable, so offering slots would mislead.
 
-### Schedule
+**Bookings.** Every lifecycle action answers the whole booking, in the same shape `GET /bookings/:id` returns. `idempotency_key` is never one of those fields: it is what the caller sent, not something the engine reports back. A request replaying a key answers `200` where the original answered `201`.
 
-```
-GET    /resources/:id/schedule
-  → 200 [ { id, day_of_week, start_time, end_time }, ... ]
+`reschedule` updates the times of the same row, keeping its id and its status. An exclusion constraint never compares a row with itself, so a single `UPDATE` is safe; if the new slots are unavailable the booking is left unchanged.
 
-PUT    /resources/:id/schedule
-  body: [ { day_of_week, start_time, end_time }, ... ]
-  → 200 [ ... ]
-```
-
-PUT replaces the entire schedule atomically.
-
-### Schedule Exceptions
-
-```
-GET    /resources/:id/exceptions?from=&to=
-  → 200 [ { id, date, start_time, end_time }, ... ]
-
-PUT    /resources/:id/exceptions/:date
-  body: { start_time, end_time }
-  → 200 { id, date, start_time, end_time }
-
-DELETE /resources/:id/exceptions/:date
-  → 204
-```
-
-PUT by date is idempotent — repeated calls overwrite.
-
-### Availability (read-only)
-
-```
-GET    /resources/:id/availability?from=2026-07-20&to=2026-07-22
-  → 200 {
-      slots: [
-        { start: "2026-07-20T09:00:00+02:00", end: "2026-07-20T10:00:00+02:00", available: true },
-        { start: "2026-07-20T10:00:00+02:00", end: "2026-07-20T11:00:00+02:00", available: false },
-        ...
-      ]
-    }
-```
-
-Unified format for all resource types — hourly, daily, or otherwise. Timestamp and range formats follow [the shared conventions](conventions.md#time-and-date-representation).
-
-An inactive resource answers with an empty slot list: it exists, so 404 would be wrong, but it is not bookable, so slots would mislead.
-
-### Bookings
-
-```
-POST   /resources/:id/bookings
-  body: {
-    customer_id?,
-    start_time,
-    end_time,
-    hold?: true,
-    hold_minutes?: 10
-  }
-  → 201 { id, resource_id, start_time, end_time, status, held_until }
-  → 409 { error: "slot_unavailable" }
-
-GET    /bookings/:id
-  → 200 { id, resource_id, start_time, end_time, status, customer_id, held_until }
-  → 404 { error: "not_found" }
-
-POST   /bookings/:id/confirm
-  → 200 { id, status: "confirmed" }
-  → 410 { error: "hold_expired" }
-
-POST   /bookings/:id/cancel
-  → 200 { id, status: "cancelled" }
-
-POST   /bookings/:id/reschedule
-  body: { start_time, end_time }
-  → 200 { id, start_time, end_time, status }
-  → 400 { error: "invalid_slot_boundary" }
-  → 404 { error: "not_found" }
-  → 409 { error: "slot_unavailable" }
-
-POST   /bookings/:id/complete
-  → 200 { id, status: "completed" }
-
-POST   /bookings/:id/no-show
-  → 200 { id, status: "no_show" }
-```
-
-`reschedule` updates the times of the same row, keeping its id and status. An exclusion constraint never compares a row with itself, so a single `UPDATE` is safe; if the new slots are unavailable the booking is left unchanged.
-
-### Listing Bookings
-
-```
-GET    /resources/:id/bookings?from=&to=&status=
-  → 200 [ { id, start_time, end_time, status, customer_id }, ... ]
-
-GET    /bookings?customer_id=&from=&to=&status=
-  → 200 [ ... ]
-```
-
-Two perspectives: by resource ("what's booked on this court") and by customer ("all my bookings").
+**Listing bookings.** Two perspectives: by resource ("what's booked on this court") and by customer ("all my bookings"). Both require a `from`/`to` window, which is what stands in for pagination — see [the limitations table](conventions.md#deliberate-limitations).
 
 ---
 
@@ -379,9 +317,9 @@ Two perspectives: by resource ("what's booked on this court") and by customer ("
 
 ## Notes for spec 2
 
-Collected while building spec 1, so they are not rediscovered later:
+Collected while building spec 1, so they were not rediscovered later. All four were carried out; kept as the record of what spec 1 left standing:
 
-- The exclusion constraint on `bookings` needs the `btree_gist` extension, to combine `uuid WITH =` and `tstzrange WITH &&` in one GiST index. The spec 1 migration does not create it.
-- `DELETE /resources/:id` is currently a hard delete. Once bookings exist it must refuse to delete a resource that has any.
-- Booking validation reuses the availability grid rather than duplicating it. The slot generator is already a pure function taking windows, a timezone, a duration and an anchor, so the boundary check should call it rather than reimplement the stepping.
-- Availability already returns `available: true` for every slot, so spec 2 changes behaviour without changing the response contract.
+- **Done.** The exclusion constraint on `bookings` needs the `btree_gist` extension, to combine `uuid WITH =` and `tstzrange WITH &&` in one GiST index. The spec 1 migration does not create it — `002_bookings.ts` does, as its first statement.
+- **Done.** `DELETE /resources/:id` is currently a hard delete. Once bookings exist it must refuse to delete a resource that has any — it now answers `409 resource_has_bookings`, and the foreign key is `ON DELETE RESTRICT` behind it.
+- **Done.** Booking validation reuses the availability grid rather than duplicating it. The slot generator is already a pure function taking windows, a timezone, a duration and an anchor, so the boundary check should call it rather than reimplement the stepping — `booking.service.ts` calls `generateSlots`, and `booking-validator.ts` checks the request against the slots it produced. Neither reimplements the stepping, and the validator imports nothing from `src/db/`.
+- **Done.** Availability already returns `available: true` for every slot, so spec 2 changes behaviour without changing the response contract. It did: the flag became real and no field moved.

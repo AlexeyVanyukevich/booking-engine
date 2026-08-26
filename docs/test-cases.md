@@ -17,6 +17,10 @@ shared, it is repeated as a numbered step rather than assumed.
 The **Covered by** column names the automated test that asserts the same thing. Cases marked
 **gap** are not automated; they are the ones worth running by hand before a release.
 
+Sections 1 to 7 are the engine's scheduling behaviour, from specs 1 and 2. Section 8 is spec
+4 — authentication, scopes, tenant isolation and the console — and is the one section whose
+cases need two tenants and several keys to run.
+
 Where the column names a dataset — `resources.test.ts ← acceptedResources` — that dataset is
 also replayed against a live engine by `./run smoke`. Adding a row there extends the test
 suite and the smoke run at once; neither runner holds a copy of the case.
@@ -24,9 +28,22 @@ suite and the smoke run at once; neither runner holds a copy of the case.
 ## Environment
 
 ```bash
-./run up                              # engine on :3000, schema applied
+./run up                              # engine on :3000, console on :3001, schema applied
 BASE=http://localhost:3000
 ```
+
+Every case below `/health` needs a key. Open the console at **http://127.0.0.1:3001**, create
+a tenant, issue a key with the **Back office** preset — every scope, which is what a test pass
+needs — and copy it; it is shown once.
+
+```bash
+KEY=bk_live_...
+AUTH="authorization: Bearer $KEY"
+```
+
+Without that header the engine answers `401 unauthorized`, whatever the case was testing. A
+case that expects some other status and gets a 401 has failed at the setup, not at the
+behaviour.
 
 For running a case by hand, the interactive reference at `http://localhost:3000/docs`
 (`./run docs`) is usually faster than curl: every endpoint has a **Try it out** button with
@@ -36,7 +53,7 @@ into a bug report.
 A helper used throughout, so cases stay readable:
 
 ```bash
-mk() { curl -s -X POST $BASE/resources -H 'content-type: application/json' -d "$1" \
+mk() { curl -s -X POST $BASE/resources -H "$AUTH" -H 'content-type: application/json' -d "$1" \
        | sed -E 's/.*"id":"([^"]+)".*/\1/'; }
 ```
 
@@ -47,12 +64,12 @@ fresh resource per case — every case below does the latter, so a reset is rare
 
 ## 1. Health
 
-| ID        | Case                      | Steps                                                                                         | Expected                                                                                                                                                                                     | Covered by       |
-| --------- | ------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| TC-HLT-01 | Liveness                  | `curl $BASE/health`                                                                           | `200 {"status":"ok"}`                                                                                                                                                                        | `health.test.ts` |
-| TC-HLT-02 | Repeatable, stateless     | Call `/health` three times                                                                    | `200` each time, identical body                                                                                                                                                              | `health.test.ts` |
-| TC-HLT-03 | JSON content type         | `curl -i $BASE/health`                                                                        | `content-type: application/json`                                                                                                                                                             | `health.test.ts` |
-| TC-HLT-04 | Liveness is not readiness | 1. `docker compose stop db`<br>2. `curl $BASE/health`<br>3. `curl $BASE/resources/<any uuid>` | Step 2 still returns `200 {"status":"ok"}` while step 3 returns `500`. **Verified by hand.** The probe reports that the process is alive, not that the database is reachable — see TC-GAP-03 | **gap**          |
+| ID        | Case                      | Steps                                                                                                    | Expected                                                                                                                                                                                                                                                             | Covered by       |
+| --------- | ------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| TC-HLT-01 | Liveness                  | `curl $BASE/health`                                                                                      | `200 {"status":"ok"}`                                                                                                                                                                                                                                                | `health.test.ts` |
+| TC-HLT-02 | Repeatable, stateless     | Call `/health` three times                                                                               | `200` each time, identical body                                                                                                                                                                                                                                      | `health.test.ts` |
+| TC-HLT-03 | JSON content type         | `curl -i $BASE/health`                                                                                   | `content-type: application/json`                                                                                                                                                                                                                                     | `health.test.ts` |
+| TC-HLT-04 | Liveness is not readiness | 1. `docker compose stop db`<br>2. `curl $BASE/health`<br>3. `curl -H "$AUTH" $BASE/resources/<any uuid>` | Step 2 still returns `200 {"status":"ok"}` while step 3 returns `500` — the key lookup is itself a query, so it fails before the handler does. **Verified by hand.** The probe reports that the process is alive, not that the database is reachable — see TC-GAP-03 | **gap**          |
 
 ---
 
@@ -338,22 +355,22 @@ Transition dates come from the tz database, not from memory — see
 
 ### Range and state
 
-| ID         | Case                         | Steps                                                            | Expected                                                                                                          | Covered by             |
-| ---------- | ---------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| TC-AVL-S01 | Half-open range              | Windows Mon and Tue, query 20th → 21st                           | Only Monday's slot; nothing lands on the `to` date                                                                | `availability.test.ts` |
-| TC-AVL-S02 | Inactive resource            | 1. Schedule a resource<br>2. `PATCH is_active:false`<br>3. Query | `200 {"slots":[]}` — not a 404: it exists but is not bookable                                                     | same                   |
-| TC-AVL-S03 | Reactivation                 | Continue TC-AVL-S02 with `is_active:true`                        | Slots return                                                                                                      | same                   |
-| TC-AVL-S04 | Schedule change is immediate | Query, change the schedule, query again                          | Second result reflects the new schedule; no caching                                                               | same                   |
-| TC-AVL-S05 | Idempotent                   | Query the same range twice                                       | Identical bodies                                                                                                  | same                   |
-| TC-AVL-S06 | Resources are independent    | Schedule A, query B                                              | `[]`                                                                                                              | same                   |
-| TC-AVL-S07 | Maximum width range          | `P1D` every day, query a full year                               | `200`, 365 slots                                                                                                  | same                   |
-| TC-AVL-S08 | Inverted range               | `from=21&to=20`                                                  | `400 invalid_range`                                                                                               | same                   |
-| TC-AVL-S09 | Equal bounds                 | `from=20&to=20`                                                  | `400 invalid_range`                                                                                               | same                   |
-| TC-AVL-S10 | Over-wide range              | two years                                                        | `400 invalid_range`                                                                                               | same                   |
-| TC-AVL-S11 | Malformed date               | `20-07-2026`, `tomorrow`, `2026-07`                              | `400`                                                                                                             | same                   |
-| TC-AVL-S12 | Unknown resource             | random uuid                                                      | `404 not_found`                                                                                                   | same                   |
-| TC-AVL-S13 | `available` is always true   | Any successful query                                             | Every slot has `available: true` — bookings arrive in spec 2, the field ships now so the contract does not change | same                   |
-| TC-AVL-S14 | Ordering and well-formedness | Any successful query                                             | Slots ascending by `start`; every `end` strictly after its `start`                                                | same                   |
+| ID         | Case                            | Steps                                                            | Expected                                                                                               | Covered by             |
+| ---------- | ------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------- |
+| TC-AVL-S01 | Half-open range                 | Windows Mon and Tue, query 20th → 21st                           | Only Monday's slot; nothing lands on the `to` date                                                     | `availability.test.ts` |
+| TC-AVL-S02 | Inactive resource               | 1. Schedule a resource<br>2. `PATCH is_active:false`<br>3. Query | `200 {"slots":[]}` — not a 404: it exists but is not bookable                                          | same                   |
+| TC-AVL-S03 | Reactivation                    | Continue TC-AVL-S02 with `is_active:true`                        | Slots return                                                                                           | same                   |
+| TC-AVL-S04 | Schedule change is immediate    | Query, change the schedule, query again                          | Second result reflects the new schedule; no caching                                                    | same                   |
+| TC-AVL-S05 | Idempotent                      | Query the same range twice                                       | Identical bodies                                                                                       | same                   |
+| TC-AVL-S06 | Resources are independent       | Schedule A, query B                                              | `[]`                                                                                                   | same                   |
+| TC-AVL-S07 | Maximum width range             | `P1D` every day, query a full year                               | `200`, 365 slots                                                                                       | same                   |
+| TC-AVL-S08 | Inverted range                  | `from=21&to=20`                                                  | `400 invalid_range`                                                                                    | same                   |
+| TC-AVL-S09 | Equal bounds                    | `from=20&to=20`                                                  | `400 invalid_range`                                                                                    | same                   |
+| TC-AVL-S10 | Over-wide range                 | two years                                                        | `400 invalid_range`                                                                                    | same                   |
+| TC-AVL-S11 | Malformed date                  | `20-07-2026`, `tomorrow`, `2026-07`                              | `400`                                                                                                  | same                   |
+| TC-AVL-S12 | Unknown resource                | random uuid                                                      | `404 not_found`                                                                                        | same                   |
+| TC-AVL-S13 | `available` with nothing booked | Any successful query on a resource with no bookings              | Every slot has `available: true`. What makes it false is in [§7.9](#79-availability-reflects-bookings) | same                   |
+| TC-AVL-S14 | Ordering and well-formedness    | Any successful query                                             | Slots ascending by `start`; every `end` strictly after its `start`                                     | same                   |
 
 ---
 
@@ -520,7 +537,104 @@ on every commit.
 
 ---
 
-## 8. Error contract
+## 8. Authentication, tenancy and the console
+
+_Spec 4._ Two planes: the engine on `:3000`, which every case above needs a key for, and the
+console on `127.0.0.1:3001`, which issues them and has no key of its own.
+
+Cases here need two tenants and several keys, so they set up through the console rather than
+with `mk()`. `CONSOLE=http://127.0.0.1:3001`.
+
+### 8.1 Authentication
+
+| ID         | Case                           | Steps                                                                                                                                           | Expected                                                                         | Covered by        |
+| ---------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------- |
+| TC-AUTH-01 | No key at all                  | `curl -i $BASE/resources/<any uuid>`                                                                                                            | `401 unauthorized`, and a `WWW-Authenticate: Bearer` header                      | `auth.test.ts`    |
+| TC-AUTH-02 | Malformed credential           | `Bearer garbage`; `Basic abcdef`; a key with no `Bearer` prefix; `Bearer` with nothing after it                                                 | `401` for each                                                                   | same              |
+| TC-AUTH-03 | Failures are indistinguishable | Compare the body of a missing key against that of a well-formed unknown one                                                                     | Byte-identical. "No such key" cannot be told from "wrong secret"                 | same              |
+| TC-AUTH-04 | The three public routes        | `GET /health`, `GET /`, `GET /docs/json` with no key                                                                                            | `200`, `302`, `200` — nothing else is reachable unauthenticated                  | same              |
+| TC-AUTH-05 | Real prefix, wrong secret      | Alter one character of a live key's secret half                                                                                                 | `401` — the comparison is constant-time over the hashes                          | `tenants.test.ts` |
+| TC-AUTH-06 | Revoked key                    | Revoke a key, then call with it                                                                                                                 | `401`; the row survives, so the audit trail does                                 | `auth.test.ts`    |
+| TC-AUTH-07 | Key of a disabled tenant       | Set `tenants.is_active = false`, then call                                                                                                      | `401` — one disabled tenant retires every key it owns                            | same              |
+| TC-AUTH-08 | `last_used_at`                 | Call twice in quick succession, reading the key row between                                                                                     | Stamped on the first call, unchanged on the second — it is a signal, not a count | same              |
+| TC-AUTH-09 | Only the hash is stored        | Issue a key, then read the `api_keys` row                                                                                                       | `key_hash` and `key_prefix` are there; the secret half is nowhere                | `tenants.test.ts` |
+| TC-AUTH-10 | Key shape                      | `bk_live_` + 8-character prefix + 43-character secret. Reject: empty, marker only, `bk_test_`, wrong length, non-alphanumeric, trailing newline | Parsed only in the exact shape; a trailing newline never parses                  | `api-key.test.ts` |
+
+### 8.2 Scopes
+
+| ID        | Case                                    | Steps                                                                               | Expected                                                                           | Covered by                             |
+| --------- | --------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------- |
+| TC-SCP-01 | Exactly the route's scope admits        | Key holding only `resources.read`, `GET /resources/<absent uuid>`                   | `404` — past authentication and authorisation; the resource simply is not there    | `auth.test.ts`                         |
+| TC-SCP-02 | Every scope but the route's refuses     | Key holding the other seven, same call                                              | `403 forbidden_scope`, `details: { "required": "resources.read" }`                 | same                                   |
+| TC-SCP-03 | Every route requires exactly one scope  | For each of the 20 scoped routes: call without its scope, then with only that scope | `403` naming the scope, then anything but `401`/`403`                              | same                                   |
+| TC-SCP-04 | A partner channel books but cannot list | Key with `availability.read`, `resources.read`, `bookings.read`, `bookings.write`   | `GET /bookings` is `403` requiring `bookings.list`. This is why the model is a set | same                                   |
+| TC-SCP-05 | An empty scope set is refused           | Issue a key with `[]`                                                               | Refused — at the service and again by `api_keys_scopes_not_empty`                  | `tenants.test.ts`                      |
+| TC-SCP-06 | An unknown scope is refused and named   | Issue with `bookings.everything`                                                    | Refused, naming the offending value                                                | same                                   |
+| TC-SCP-07 | A repeated scope is deduplicated        | Issue with the same scope twice                                                     | Stored once                                                                        | same                                   |
+| TC-SCP-08 | The vocabulary is one list              | The eight scopes in `scopes.ts` against the CHECK in `003_tenancy.ts`               | Identical sets; every scope is reachable through at least one preset               | `scopes.test.ts`, `migrations.test.ts` |
+
+### 8.3 Tenant isolation
+
+Two tenants, A and B, each with an all-scopes key. Every case asks whether B can see or touch
+something of A's.
+
+| ID        | Case                                          | Steps                                                                                            | Expected                                                                                                   | Covered by          |
+| --------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- | ------------------- |
+| TC-ISO-01 | A foreign id answers 404, never 403           | With B's key, `GET` A's resource, schedule, exceptions, availability and bookings                | `404` on all five, and the body is identical to that of a genuinely absent id once the echoed id is masked | `isolation.test.ts` |
+| TC-ISO-02 | A foreign resource cannot be modified         | With B's key: `PATCH`, `DELETE`, `PUT` the schedule, `PUT` and `DELETE` an exception             | `404` on all five, and A's resource is unchanged afterwards                                                | same                |
+| TC-ISO-03 | A foreign resource cannot be booked           | With B's key, `POST` a booking on A's resource                                                   | `404`                                                                                                      | same                |
+| TC-ISO-04 | A foreign booking cannot be read or moved     | With B's key: `GET`, `cancel`, `complete`, `no-show`, `reschedule` A's booking                   | `404` on all five; A's booking is still `confirmed`                                                        | same                |
+| TC-ISO-05 | Listings show only the caller's rows          | A books for `guest-1`; both tenants list `?customer_id=guest-1`                                  | One row for A, `[]` for B — the same customer id means nothing across the boundary                         | same                |
+| TC-ISO-06 | Neither capacity nor overlap leaks across     | A resource per tenant with identical times; both book the same night                             | Both `201`. Neither the exclusion constraint nor the capacity count reaches over                           | same                |
+| TC-ISO-07 | Every written row carries the caller's tenant | Create a resource, a schedule, an exception and a booking as A; read `tenant_id` from each table | All four match A, so the denormalised column cannot drift from the composite foreign key                   | same                |
+
+### 8.4 The console
+
+`GET` is a page, every write is a form post answered with `303`, and the whole thing works
+with JavaScript switched off.
+
+| ID        | Case                                    | Steps                                                                                                                                       | Expected                                                                                                                                                                                                                 | Covered by                        |
+| --------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------- |
+| TC-CON-01 | Needs no key, unlike the data plane     | `curl $CONSOLE/tenants` with no `Authorization`                                                                                             | `200` and a page. It is loopback that protects this, not a credential                                                                                                                                                    | `console.test.ts`                 |
+| TC-CON-02 | Root redirects to the tenant list       | `curl -i $CONSOLE/`                                                                                                                         | `303` to `/tenants`                                                                                                                                                                                                      | same                              |
+| TC-CON-03 | An empty list is explained              | Fresh database, open `/tenants`                                                                                                             | A sentence saying there are none, not an empty table                                                                                                                                                                     | same                              |
+| TC-CON-04 | Creating redirects rather than renders  | `POST /tenants` with a name                                                                                                                 | `303` to `/tenants`, so a reload re-reads the list instead of re-posting                                                                                                                                                 | same                              |
+| TC-CON-05 | Names the server refuses                | `"  "`, `""`, and a name past the length limit                                                                                              | Refused, and nothing is created                                                                                                                                                                                          | same                              |
+| TC-CON-06 | Names it accepts                        | A name with surrounding spaces; emoji; Cyrillic                                                                                             | Trimmed and stored; non-Latin text round-trips intact                                                                                                                                                                    | same, `tenants.spec.ts`           |
+| TC-CON-07 | A hostile name is rendered as text      | Create a tenant named `<script>alert(1)</script>`                                                                                           | Shown literally, escaped; no script runs                                                                                                                                                                                 | `console.test.ts`, `html.test.ts` |
+| TC-CON-08 | Two tenants of one name stay apart      | Create the same name twice                                                                                                                  | Both listed, distinguished by id                                                                                                                                                                                         | `console.test.ts`                 |
+| TC-CON-09 | A key is revealed exactly once          | Issue a key from the keys page                                                                                                              | `303` to `?revealed=<token>`, and that page shows the secret                                                                                                                                                             | same                              |
+| TC-CON-10 | Reloading loses it and issues no second | Reload the reveal URL, then revisit it                                                                                                      | The plain list, one key still. The flash is one-shot, so both follow from one mechanism                                                                                                                                  | same, `flash.test.ts`             |
+| TC-CON-11 | The list never holds the secret         | Search the keys page markup                                                                                                                 | Only `key_prefix` appears anywhere                                                                                                                                                                                       | `console.test.ts`                 |
+| TC-CON-12 | A preset stores its expansion           | Issue with **Partner channel**, then read the row                                                                                           | Its four scopes, and the preset name nowhere on the key — so editing the preset later changes no key already issued                                                                                                      | same, `scopes.test.ts`            |
+| TC-CON-13 | A custom subset works                   | Choose **Custom** with one checkbox, then with several                                                                                      | Exactly the ticked scopes. Custom with none ticked is refused                                                                                                                                                            | `console.test.ts`                 |
+| TC-CON-14 | Revocation                              | Revoke a key from the list                                                                                                                  | Marked revoked, the row kept, the revoke control gone                                                                                                                                                                    | same                              |
+| TC-CON-15 | Revoking what is not there              | Revoke an unknown id, and revoke the same key twice                                                                                         | `404` both times                                                                                                                                                                                                         | same                              |
+| TC-CON-16 | Origin guard                            | `POST` with a foreign `Origin`; with none at all; with one matching the `Host` it was addressed to; with a different port on that same host | `403` and nothing created; accepted, because a browser always sends one so its absence is curl; accepted; `403`. The expectation is derived from `Host`, not from `CONSOLE_PORT`, so it still holds on an ephemeral port | same                              |
+| TC-CON-17 | Reads ignore the origin                 | `GET` any page with a foreign `Origin`                                                                                                      | Unaffected — the guard is for writes                                                                                                                                                                                     | same                              |
+| TC-CON-18 | Errors are pages, not JSON              | A malformed uuid; a well-formed unknown tenant; an unknown path                                                                             | `400`, `404`, `404`, each an HTML page rather than a stack trace or a JSON body                                                                                                                                          | same                              |
+
+### 8.5 The console in a real browser
+
+Playwright, run by `./run test:ui`. It needs a browser binary, which is why it is not part of
+`./run check` — see the README. These are the promises a request-level test cannot check.
+
+| ID       | Case                                         | Expected                                                                                                                                   | Covered by          |
+| -------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
+| TC-UI-01 | Works with JavaScript disabled               | Every form still submits under `javaScriptEnabled: false`, presets included — they are radio buttons and checkboxes, not a scripted widget | `a11y.spec.ts`      |
+| TC-UI-02 | Every input has a label                      | On every page                                                                                                                              | same                |
+| TC-UI-03 | One `h1` and a titled document per page      | On every page                                                                                                                              | same                |
+| TC-UI-04 | No horizontal scroll at 390 px               | The document fits a phone viewport                                                                                                         | same                |
+| TC-UI-05 | Keyboard alone is enough                     | Enter in a text field submits; every control on the keys page is reachable by tabbing                                                      | same                |
+| TC-UI-06 | Copying the secret                           | The copy button puts the whole secret on the clipboard, and the secret stays selectable when the button cannot work                        | `clipboard.spec.ts` |
+| TC-UI-07 | A key issued here works against the engine   | Issue in the console, call `:3000` with it, and see only its own tenant's rows                                                             | `keys.spec.ts`      |
+| TC-UI-08 | The presets mean what the README says        | A **Partner channel** key books and is refused the calendar; a **Widget** key cannot create a resource                                     | same                |
+| TC-UI-09 | Revoking takes effect at the engine          | Revoke in the console, and the next call with that key is refused                                                                          | same                |
+| TC-UI-10 | The console never answers a data-plane route | A path the engine owns is not served by the console                                                                                        | `hardening.spec.ts` |
+
+---
+
+## 9. Error contract
 
 | ID        | Case                                 | Steps                                                      | Expected                                                                                  | Covered by              |
 | --------- | ------------------------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------- |
@@ -534,13 +648,13 @@ on every commit.
 
 ---
 
-## 9. Persistence
+## 10. Persistence
 
 Verified against the database directly rather than through HTTP.
 
 | ID       | Case                           | Expected                                                                                                                                                                        | Covered by           |
 | -------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| TC-DB-01 | Tables exist                   | `resources`, `schedule`, `schedule_exceptions`                                                                                                                                  | `migrations.test.ts` |
+| TC-DB-01 | Tables exist                   | `resources`, `schedule`, `schedule_exceptions`, `bookings`, `tenants`, `api_keys`                                                                                               | `migrations.test.ts` |
 | TC-DB-02 | Column types                   | `slot_duration` is `interval`; `slot_anchor_time` and schedule times are `time without time zone`; `date` is `date`; `created_at` is `timestamptz`; `day_of_week` is `smallint` | same                 |
 | TC-DB-03 | Duration round-trip            | Every accepted duration reads back in canonical form                                                                                                                            | same                 |
 | TC-DB-04 | `P1D` ≠ `PT23H59M`             | Stored distinctly                                                                                                                                                               | same                 |
@@ -560,7 +674,7 @@ Verified against the database directly rather than through HTTP.
 
 ---
 
-## 10. End-to-end journeys
+## 11. End-to-end journeys
 
 Full chains, run in order, as an acceptance pass before a release.
 
@@ -602,16 +716,16 @@ Full chains, run in order, as an acceptance pass before a release.
 
 ---
 
-## 11. Known gaps
+## 12. Known gaps
 
 Not covered by any automated test. Run these by hand, or automate them when the cost of a
 regression justifies it.
 
-| ID        | Gap                                                      | Why it matters                                                                                                                                                   |
-| --------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| TC-GAP-01 | The `down` migration is never executed                   | `001_initial.ts` defines `down`, and nothing proves it works. A rollback would be discovered to be broken exactly when it is needed                              |
-| TC-GAP-02 | Migrations are never run twice against the same database | `migrateToLatest` should be a no-op on an up-to-date schema. The suite applies them once, in `globalSetup`                                                       |
-| TC-GAP-03 | `/health` does not check the database                    | It is a liveness probe, not readiness. An orchestrator using it to decide whether to route traffic would send requests to an instance that cannot reach Postgres |
-| TC-GAP-04 | No named end-to-end journeys                             | TC-E2E-01 to 03 pass step by step but are not asserted as a chain, so an interaction bug between steps could survive                                             |
-| TC-GAP-05 | The container image is not exercised by tests            | The suite runs the TypeScript sources; the compiled `dist/` in the image is verified only by starting it manually                                                |
-| TC-GAP-06 | No load or concurrency testing                           | Meaningless before bookings exist, but the availability endpoint's 366-day ceiling has never been measured under load                                            |
+| ID        | Gap                                                      | Why it matters                                                                                                                                                                                                                                             |
+| --------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TC-GAP-01 | No `down` migration is ever executed                     | All three migrations define `down`, and nothing runs any of them. `003_tenancy.ts` even refuses its own reversal when a booking has a null `customer_id` — a branch no test reaches. A rollback would be discovered to be broken exactly when it is needed |
+| TC-GAP-02 | Migrations are never run twice against the same database | `migrateToLatest` should be a no-op on an up-to-date schema. The suite applies them once, in `globalSetup`                                                                                                                                                 |
+| TC-GAP-03 | `/health` does not check the database                    | It is a liveness probe, not readiness. An orchestrator using it to decide whether to route traffic would send requests to an instance that cannot reach Postgres                                                                                           |
+| TC-GAP-04 | No named end-to-end journeys                             | TC-E2E-01 to 03 pass step by step but are not asserted as a chain, so an interaction bug between steps could survive                                                                                                                                       |
+| TC-GAP-05 | The container image is not exercised by tests            | The suite runs the TypeScript sources; the compiled `dist/` in the image is verified only by starting it manually                                                                                                                                          |
+| TC-GAP-06 | No load testing                                          | Contention is covered case by case — TC-BK-O09, TC-BK-I09, TC-BK-L07 — but nothing measures throughput. The availability endpoint's 366-day ceiling has never been timed under load                                                                        |
