@@ -328,8 +328,8 @@ the first of them is 23 real hours long.
 
 ## Known limitations
 
-No windows crossing midnight, `pool` mode rejected until spec 3, no schedule history, no
-authentication, bookings in the past are accepted, a schedule edit may orphan existing
-bookings, `shared` serializes writes per resource, no pagination on listings, no automatic
-completion. Each is deliberate, and the reasoning and cost to lift are tabulated in
+No windows crossing midnight, `pool` mode rejected until spec 3, no schedule history, bookings
+in the past are accepted, a schedule edit may orphan existing bookings, `shared` serializes
+writes per resource, no pagination on listings, no automatic completion. Each is deliberate,
+and the reasoning and cost to lift are tabulated in
 [docs/conventions.md](docs/conventions.md#deliberate-limitations).
