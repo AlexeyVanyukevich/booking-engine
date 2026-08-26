@@ -97,6 +97,7 @@ describe('scopes', () => {
   // Generated over the route table, so a route added later without a scope declaration is
   // caught here as well as at startup.
   it.each([
+    ['GET', '/resources', 'resources.read'],
     ['GET', '/resources/00000000-0000-4000-8000-000000000000', 'resources.read'],
     ['POST', '/resources', 'resources.write'],
     ['PATCH', '/resources/00000000-0000-4000-8000-000000000000', 'resources.write'],
