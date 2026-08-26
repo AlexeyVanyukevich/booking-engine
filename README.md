@@ -8,14 +8,14 @@ This stage implements resources, weekly schedules, per-date exceptions, availabi
 bookings — creation, the lifecycle, hold expiry, reschedule, listings, and capacity for both
 `exclusive` and `shared`. The `pool` concurrency mode arrives in spec 3.
 
-| Document                                           | What it holds                                                            |
-| -------------------------------------------------- | ------------------------------------------------------------------------ |
-| [docs/architecture.md](docs/architecture.md)       | The system: data model, lifecycle, full API surface across every slice   |
-| [docs/conventions.md](docs/conventions.md)         | Rules that hold everywhere: formats, error shape, stack, layout, testing |
-| [docs/test-cases.md](docs/test-cases.md)           | Every promised behaviour as a runnable case, with its automated coverage |
-| [docs/superpowers/specs/](docs/superpowers/specs/) | One spec per slice — what it delivers and why it was decided that way    |
-| [docs/superpowers/plans/](docs/superpowers/plans/) | The task-by-task plan that implemented each spec                         |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                 | Commit conventions and workflow                                          |
+| Document                                           | What it holds                                                                       |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [docs/architecture.md](docs/architecture.md)       | The system: data model, lifecycle, availability, and why contracts have their shape |
+| [docs/conventions.md](docs/conventions.md)         | Rules that hold everywhere: formats, error shape, stack, layout, testing            |
+| [docs/test-cases.md](docs/test-cases.md)           | Every promised behaviour as a runnable case, with its automated coverage            |
+| [docs/superpowers/specs/](docs/superpowers/specs/) | One spec per slice — what it delivers and why it was decided that way               |
+| [docs/superpowers/plans/](docs/superpowers/plans/) | The task-by-task plan that implemented each spec                                    |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                 | Commit conventions and workflow                                                     |
 
 ## Requirements
 
