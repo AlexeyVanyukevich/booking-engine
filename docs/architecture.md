@@ -37,6 +37,41 @@ is hard-coded rather than configurable.
 
 ## Data Model
 
+### Tenant
+
+The owner of every other row. Created only from the console; the engine never creates one.
+
+| Column     | Type                  | Description                                                                 |
+| ---------- | --------------------- | --------------------------------------------------------------------------- |
+| id         | UUID, PK              |                                                                             |
+| name       | text, NOT NULL        | A human label for the console. CHECKed non-blank; the engine never reads it |
+| is_active  | boolean, default true | False retires every key the tenant owns at once, without revoking each      |
+| created_at | timestamptz, `now()`  |                                                                             |
+
+The owned tables reference this with `ON DELETE RESTRICT`. A tenant with rows cannot be deleted out from under them, and deactivating is the reversible way to switch one off.
+
+### ApiKey
+
+One key belongs to one tenant and carries a set of scopes. The secret half is never stored.
+
+| Column       | Type                   | Description                                                                        |
+| ------------ | ---------------------- | ---------------------------------------------------------------------------------- |
+| id           | UUID, PK               |                                                                                    |
+| tenant_id    | UUID, FK → Tenant      | `ON DELETE CASCADE` — a key has no meaning without its tenant                      |
+| name         | text, NOT NULL         | What the key is for, shown in the console. CHECKed non-blank                       |
+| key_prefix   | text, NOT NULL, UNIQUE | The lookup handle, stored in the clear                                             |
+| key_hash     | text, NOT NULL         | SHA-256 of the secret half                                                         |
+| scopes       | text[], NOT NULL       | CHECKed non-empty and contained in the known set — a second copy of the vocabulary |
+| created_at   | timestamptz, `now()`   |                                                                                    |
+| last_used_at | timestamptz            | Stamped at most once a minute: a liveness signal, not a request count              |
+| revoked_at   | timestamptz            | Set rather than deleted, so the audit trail survives the key                       |
+
+A key is `bk_live_` followed by an 8-character prefix and a 43-character secret. The prefix is what the lookup index finds; the secret is compared against `key_hash` in constant time and appears in one HTTP response, ever.
+
+**SHA-256 rather than argon2 or bcrypt.** Those are slow on purpose because human passwords have little entropy and must survive an offline attack. This secret is 43 base62 characters from a CSPRNG — roughly 256 bits — so there is no search to slow down, and a per-request argon2 would add ~100 ms to every call to defend against an attack that cannot succeed either way.
+
+The lookup index is partial, `WHERE revoked_at IS NULL`: authentication only ever asks for live keys, and revoked ones accumulate forever.
+
 ### Resource
 
 An abstract bookable unit. Contains only the parameters the engine needs — no domain-specific fields.
