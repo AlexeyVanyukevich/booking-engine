@@ -6,7 +6,7 @@ A domain-agnostic booking engine that operates on abstractions: resource, schedu
 
 ## Status
 
-This document describes the whole system. It is delivered in three slices, each with its own spec in [superpowers/specs/](superpowers/specs/):
+This document describes the whole system. It is delivered in slices, each with its own spec in [superpowers/specs/](superpowers/specs/):
 
 | Slice | Content                                                              | State                               |
 | ----- | -------------------------------------------------------------------- | ----------------------------------- |
@@ -128,17 +128,20 @@ Applied to this model: `timezone` and `concurrency_mode` are immutable after cre
 
 A booking record. No domain fields (notes, guest count, etc.) — those belong to the domain layer.
 
-| Column      | Type                       | Description                                                              |
-| ----------- | -------------------------- | ------------------------------------------------------------------------ |
-| id          | UUID, PK                   |                                                                          |
-| tenant_id   | UUID, FK → Tenant          | Composite FK with `resource_id`                                          |
-| resource_id | UUID, FK → Resource        |                                                                          |
-| start_time  | timestamptz, NOT NULL      |                                                                          |
-| end_time    | timestamptz, NOT NULL      |                                                                          |
-| status      | text, NOT NULL             | `held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired` |
-| customer_id | text                       | Opaque external identifier. Optional — see below                         |
-| held_until  | timestamptz                | Set on `held` and `expired`; NULL otherwise                              |
-| created_at  | timestamptz, default now() |                                                                          |
+| Column           | Type                       | Description                                                              |
+| ---------------- | -------------------------- | ------------------------------------------------------------------------ |
+| id               | UUID, PK                   |                                                                          |
+| tenant_id        | UUID, FK → Tenant          | Composite FK with `resource_id`                                          |
+| resource_id      | UUID, FK → Resource        |                                                                          |
+| start_time       | timestamptz, NOT NULL      |                                                                          |
+| end_time         | timestamptz, NOT NULL      |                                                                          |
+| status           | text, NOT NULL             | `held` · `confirmed` · `cancelled` · `completed` · `no_show` · `expired` |
+| customer_id      | text                       | Opaque external identifier. Optional — see below                         |
+| concurrency_mode | text, NOT NULL             | Copied from the resource, because the exclusion predicate cannot read it |
+| held_until       | timestamptz                | Set on `held` and `expired`; NULL otherwise                              |
+| idempotency_key  | text                       | Optional; unique per `(resource_id, idempotency_key)`. Never returned    |
+| created_at       | timestamptz, default now() |                                                                          |
+| updated_at       | timestamptz, default now() |                                                                          |
 
 `customer_id` is optional because a caller keeping its own guest records has no need for the
 engine to hold one. It survived rather than being dropped because the engine **queries** by it:
@@ -154,15 +157,17 @@ ALTER TABLE bookings
     GENERATED ALWAYS AS (tstzrange(start_time, end_time)) STORED;
 
 ALTER TABLE bookings
-  ADD CONSTRAINT no_overlap
+  ADD CONSTRAINT bookings_no_overlap
     EXCLUDE USING gist (
       resource_id WITH =,
       time_range  WITH &&
     )
-    WHERE (status IN ('held', 'confirmed'));
+    WHERE (status IN ('held', 'confirmed') AND concurrency_mode = 'exclusive');
 ```
 
-For `capacity > 1`: use `SELECT COUNT(*) ... FOR UPDATE` inside a transaction.
+The mode is part of the predicate, not just of the heading: without it the second overlapping booking on a `shared` resource would be refused here and the mode would be unreachable. The predicate cannot read `resources`, which is why the mode is copied onto the booking — it is immutable on the resource, so the copy cannot drift.
+
+For `capacity > 1` the invariant is a count rather than disjointness, so it is carried by `SELECT COUNT(*)` under the resource row lock inside a transaction — see [the concurrency rules](conventions.md#concurrency).
 
 ---
 
@@ -207,7 +212,7 @@ getAvailability(resource, from, to):
   5. Return list of slots with available flag
 ```
 
-Step 3 arrives with spec 2; until then every returned slot is free, and the `available` flag ships already so the contract does not change when bookings land.
+Step 3 arrived with spec 2. Occupancy is counted **per slot**, and a booking counts against a slot when it overlaps it: a slot is `available: false` once `capacity` active bookings overlap it, and one multi-slot booking marks every slot it touches.
 
 All local-time arithmetic runs through a timezone-aware library with the resource's zone, which is what makes a `P1D` slot span 23, 24 or 25 real hours across a transition while still running from local anchor to local anchor. A trailing remainder shorter than one slot is dropped: a 09:00–17:30 window with a one-hour slot yields eight slots.
 
@@ -318,35 +323,40 @@ POST   /resources/:id/bookings
     start_time,
     end_time,
     hold?: true,
-    hold_minutes?: 10
+    hold_minutes?: 10,
+    idempotency_key?
   }
-  → 201 { id, resource_id, start_time, end_time, status, held_until }
+  → 201 { id, resource_id, start_time, end_time, status, customer_id, held_until }
+  → 200 the same body, when an idempotency key replays a booking already created
   → 409 { error: "slot_unavailable" }
+  → 409 { error: "idempotency_key_reused" }
 
 GET    /bookings/:id
   → 200 { id, resource_id, start_time, end_time, status, customer_id, held_until }
   → 404 { error: "not_found" }
 
 POST   /bookings/:id/confirm
-  → 200 { id, status: "confirmed" }
+  → 200 { id, status: "confirmed", ... }
   → 410 { error: "hold_expired" }
 
 POST   /bookings/:id/cancel
-  → 200 { id, status: "cancelled" }
+  → 200 { id, status: "cancelled", ... }
 
 POST   /bookings/:id/reschedule
   body: { start_time, end_time }
-  → 200 { id, start_time, end_time, status }
+  → 200 { id, start_time, end_time, status, ... }
   → 400 { error: "invalid_slot_boundary" }
   → 404 { error: "not_found" }
   → 409 { error: "slot_unavailable" }
 
 POST   /bookings/:id/complete
-  → 200 { id, status: "completed" }
+  → 200 { id, status: "completed", ... }
 
 POST   /bookings/:id/no-show
-  → 200 { id, status: "no_show" }
+  → 200 { id, status: "no_show", ... }
 ```
+
+Every one of these answers the whole booking — the seven fields `GET /bookings/:id` returns. `idempotency_key` is not among them: it is what the caller sent, never something the engine reports back.
 
 `reschedule` updates the times of the same row, keeping its id and status. An exclusion constraint never compares a row with itself, so a single `UPDATE` is safe; if the new slots are unavailable the booking is left unchanged.
 
@@ -354,7 +364,7 @@ POST   /bookings/:id/no-show
 
 ```
 GET    /resources/:id/bookings?from=&to=&status=
-  → 200 [ { id, start_time, end_time, status, customer_id }, ... ]
+  → 200 [ { id, resource_id, start_time, end_time, status, customer_id, held_until }, ... ]
 
 GET    /bookings?customer_id=&from=&to=&status=
   → 200 [ ... ]
@@ -379,9 +389,9 @@ Two perspectives: by resource ("what's booked on this court") and by customer ("
 
 ## Notes for spec 2
 
-Collected while building spec 1, so they are not rediscovered later:
+Collected while building spec 1, so they were not rediscovered later. All four were carried out; kept as the record of what spec 1 left standing:
 
-- The exclusion constraint on `bookings` needs the `btree_gist` extension, to combine `uuid WITH =` and `tstzrange WITH &&` in one GiST index. The spec 1 migration does not create it.
-- `DELETE /resources/:id` is currently a hard delete. Once bookings exist it must refuse to delete a resource that has any.
-- Booking validation reuses the availability grid rather than duplicating it. The slot generator is already a pure function taking windows, a timezone, a duration and an anchor, so the boundary check should call it rather than reimplement the stepping.
-- Availability already returns `available: true` for every slot, so spec 2 changes behaviour without changing the response contract.
+- **Done.** The exclusion constraint on `bookings` needs the `btree_gist` extension, to combine `uuid WITH =` and `tstzrange WITH &&` in one GiST index. The spec 1 migration does not create it — `002_bookings.ts` does, as its first statement.
+- **Done.** `DELETE /resources/:id` is currently a hard delete. Once bookings exist it must refuse to delete a resource that has any — it now answers `409 resource_has_bookings`, and the foreign key is `ON DELETE RESTRICT` behind it.
+- **Done.** Booking validation reuses the availability grid rather than duplicating it. The slot generator is already a pure function taking windows, a timezone, a duration and an anchor, so the boundary check should call it rather than reimplement the stepping — `booking.service.ts` calls `generateSlots`, and `booking-validator.ts` checks the request against the slots it produced. Neither reimplements the stepping, and the validator imports nothing from `src/db/`.
+- **Done.** Availability already returns `available: true` for every slot, so spec 2 changes behaviour without changing the response contract. It did: the flag became real and no field moved.
