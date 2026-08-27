@@ -83,47 +83,40 @@ Append to `tests/integration/migrations.test.ts`:
 ```ts
 describe('004_pools', () => {
   it('accepts a member whose pool is in the same tenant', async () => {
-    const db = getTestDb()
-    const pool = await insertResource({ concurrency_mode: 'pool' })
-    const member = await insertResource({ pool_id: pool.id })
-    const row = await db
+    const poolId = await insertResource({ concurrency_mode: 'pool' })
+    const memberId = await insertResource({ pool_id: poolId })
+    const row = await getTestDb()
       .selectFrom('resources')
       .select('pool_id')
-      .where('id', '=', member.id)
+      .where('id', '=', memberId)
       .executeTakeFirstOrThrow()
-    expect(row.pool_id).toBe(pool.id)
+    expect(row.pool_id).toBe(poolId)
   })
 
   it('refuses a member whose pool belongs to another tenant', async () => {
-    const other = await insertTenant('Other')
-    const pool = await insertResource({ concurrency_mode: 'pool', tenant_id: other })
-    await expect(insertResource({ pool_id: pool.id })).rejects.toThrow(/resources_pool_fk/)
+    const otherTenant = await seedTenantId('other tenant')
+    const poolId = await insertResource({ concurrency_mode: 'pool', tenant_id: otherTenant })
+    await expect(insertResource({ pool_id: poolId })).rejects.toThrow(/resources_pool_fk/)
   })
 
   it('refuses a row that points at itself', async () => {
-    const resource = await insertResource({})
-    const db = getTestDb()
+    const id = await insertResource({})
     await expect(
-      db
-        .updateTable('resources')
-        .set({ pool_id: resource.id })
-        .where('id', '=', resource.id)
-        .execute(),
+      getTestDb().updateTable('resources').set({ pool_id: id }).where('id', '=', id).execute(),
     ).rejects.toThrow(/resources_pool_not_self/)
   })
 
   it('refuses to delete a pool that still has members', async () => {
-    const pool = await insertResource({ concurrency_mode: 'pool' })
-    await insertResource({ pool_id: pool.id })
-    const db = getTestDb()
-    await expect(db.deleteFrom('resources').where('id', '=', pool.id).execute()).rejects.toThrow(
-      /resources_pool_fk/,
-    )
+    const poolId = await insertResource({ concurrency_mode: 'pool' })
+    await insertResource({ pool_id: poolId })
+    await expect(
+      getTestDb().deleteFrom('resources').where('id', '=', poolId).execute(),
+    ).rejects.toThrow(/resources_pool_fk/)
   })
 })
 ```
 
-`insertResource` and `insertTenant` are the helpers this file already uses; extend `insertResource` to accept `pool_id` and `tenant_id` overrides if it does not already.
+`insertResource(overrides)` already exists in this file and returns the created **id**, not a row; it spreads `overrides` into the insert, so `pool_id` and `tenant_id` need no change to it. `seedTenantId(name)` comes from `tests/integration/helpers.js`, which the file already imports — there is no `insertTenant`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
