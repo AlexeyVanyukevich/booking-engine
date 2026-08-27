@@ -621,3 +621,37 @@ describe('tenancy', () => {
     },
   )
 })
+
+describe('004_pools', () => {
+  it('accepts a member whose pool is in the same tenant', async () => {
+    const poolId = await insertResource({ concurrency_mode: 'pool' })
+    const memberId = await insertResource({ pool_id: poolId })
+    const row = await getTestDb()
+      .selectFrom('resources')
+      .select('pool_id')
+      .where('id', '=', memberId)
+      .executeTakeFirstOrThrow()
+    expect(row.pool_id).toBe(poolId)
+  })
+
+  it('refuses a member whose pool belongs to another tenant', async () => {
+    const otherTenant = await seedTenantId('other tenant')
+    const poolId = await insertResource({ concurrency_mode: 'pool', tenant_id: otherTenant })
+    await expect(insertResource({ pool_id: poolId })).rejects.toThrow(/resources_pool_fk/)
+  })
+
+  it('refuses a row that points at itself', async () => {
+    const id = await insertResource({})
+    await expect(
+      getTestDb().updateTable('resources').set({ pool_id: id }).where('id', '=', id).execute(),
+    ).rejects.toThrow(/resources_pool_not_self/)
+  })
+
+  it('refuses to delete a pool that still has members', async () => {
+    const poolId = await insertResource({ concurrency_mode: 'pool' })
+    await insertResource({ pool_id: poolId })
+    await expect(
+      getTestDb().deleteFrom('resources').where('id', '=', poolId).execute(),
+    ).rejects.toThrow(/resources_pool_fk/)
+  })
+})

@@ -40,6 +40,11 @@ export interface ResourcesTable {
   slot_anchor_time: Generated<string>
   capacity: Generated<number>
   concurrency_mode: ConcurrencyMode
+  /**
+   * The pool this resource belongs to, or null. A pool is itself a resource with
+   * `concurrency_mode = 'pool'`; see spec 3.
+   */
+  pool_id: ColumnType<string | null, string | null | undefined, string | null>
   created_at: Generated<Date>
   updated_at: ColumnType<Date, Date | undefined, Date>
 }
