@@ -1,6 +1,7 @@
 import { ScheduleShapeMismatchError, ValidationError } from '../../shared/errors.js'
 import { assertValidRange } from '../../shared/range.js'
 import { formatTime, parseSlotDuration } from '../../shared/time.js'
+import type { ResourceRow } from '../resources/resource.repository.js'
 import type { ResourceService } from '../resources/resource.service.js'
 import type { ExceptionRepository, ExceptionRow } from './exception.repository.js'
 import type { ExceptionResponse, PutExceptionBody } from './exception.schemas.js'
@@ -8,6 +9,20 @@ import type { ExceptionResponse, PutExceptionBody } from './exception.schemas.js
 function toMinutes(time: string): number {
   const [hours, minutes] = time.split(':')
   return Number(hours) * 60 + Number(minutes)
+}
+
+/**
+ * A pool has no availability of its own — it is the union over its members, which is where
+ * the schedules live. Refusing rather than silently ignoring is design principle #8; a pool
+ * whose schedule was accepted and never consulted would be a lie the caller could not see.
+ */
+function assertNotPool(resource: ResourceRow): void {
+  if (resource.concurrency_mode === 'pool') {
+    throw new ValidationError(
+      `Resource ${resource.id} is a pool, and a pool has no schedule of its own; its availability is the union over its members`,
+      { resource_id: resource.id },
+    )
+  }
 }
 
 function toResponse(row: ExceptionRow): ExceptionResponse {
@@ -45,6 +60,7 @@ export class ExceptionService {
     body: PutExceptionBody,
   ): Promise<ExceptionResponse> {
     const resource = await this.resources.loadOrFail(tenantId, resourceId)
+    assertNotPool(resource)
     const duration = parseSlotDuration(resource.slot_duration)
 
     const bothNull = body.start_time === null && body.end_time === null
@@ -83,7 +99,8 @@ export class ExceptionService {
 
   /** Idempotent: deleting an exception that does not exist is not an error. */
   async delete(tenantId: string, resourceId: string, date: string): Promise<void> {
-    await this.resources.loadOrFail(tenantId, resourceId)
+    const resource = await this.resources.loadOrFail(tenantId, resourceId)
+    assertNotPool(resource)
     await this.repository.delete(tenantId, resourceId, date)
   }
 }

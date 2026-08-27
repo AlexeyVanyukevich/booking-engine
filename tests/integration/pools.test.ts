@@ -67,4 +67,28 @@ describe('pools', () => {
     expect(response.statusCode).toBe(409)
     expect(response.json().error).toBe('pool_has_members')
   })
+
+  it.each([
+    {
+      name: 'a schedule',
+      call: (id: string) =>
+        api.putSchedule(id, [{ day_of_week: 0, start_time: null, end_time: null }]),
+    },
+    {
+      name: 'an exception',
+      call: (id: string) =>
+        api.putException(id, '2026-09-01', { start_time: null, end_time: null }),
+    },
+  ])('refuses $name on a pool', async ({ call }) => {
+    const pool = (await api.createResource(poolBase)).json()
+    const response = await call(pool.id)
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('validation_error')
+    expect(response.json().message).toMatch(/pool/i)
+  })
+
+  it('still serves a schedule read on a pool, as an empty list', async () => {
+    const pool = (await api.createResource(poolBase)).json()
+    expect((await api.getSchedule(pool.id)).json()).toEqual([])
+  })
 })
