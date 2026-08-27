@@ -104,6 +104,18 @@ export class ResourceHasBookingsError extends AppError {
   readonly code = 'resource_has_bookings'
 }
 
+/** A `pool_id` write that breaks one of the four membership rules. `details.rule` names which. */
+export class InvalidPoolMembershipError extends AppError {
+  readonly statusCode = 400
+  readonly code = 'invalid_pool_membership'
+}
+
+/** `DELETE /resources/:id` on a pool whose members have not left it. */
+export class PoolHasMembersError extends AppError {
+  readonly statusCode = 409
+  readonly code = 'pool_has_members'
+}
+
 export class IdempotencyKeyReusedError extends AppError {
   readonly statusCode = 409
   readonly code = 'idempotency_key_reused'

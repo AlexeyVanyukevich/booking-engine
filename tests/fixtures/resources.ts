@@ -4,6 +4,7 @@ export interface ResourcePayload {
   concurrency_mode: 'exclusive' | 'shared' | 'pool'
   capacity?: number
   slot_anchor_time?: string
+  pool_id?: string
 }
 
 export const TIMEZONES = {
