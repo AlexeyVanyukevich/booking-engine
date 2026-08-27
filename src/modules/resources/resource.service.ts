@@ -98,6 +98,7 @@ export function toResponse(row: ResourceRow): ResourceResponse {
     capacity: row.capacity,
     concurrency_mode: row.concurrency_mode,
     is_active: row.is_active,
+    pool_id: row.pool_id,
   }
 }
 
@@ -127,6 +128,7 @@ export class ResourceService {
       slot_anchor_time: anchor,
       capacity,
       concurrency_mode: body.concurrency_mode,
+      pool_id: body.pool_id ?? null,
     })
 
     return toResponse(row)
@@ -158,6 +160,7 @@ export class ResourceService {
       slot_anchor_time: anchor,
       capacity,
       ...(body.is_active === undefined ? {} : { is_active: body.is_active }),
+      ...(body.pool_id === undefined ? {} : { pool_id: body.pool_id }),
     })
 
     if (!row) throw new NotFoundError(`Resource ${id} not found`)

@@ -61,6 +61,11 @@ describe('POST /resources', () => {
     },
   )
 
+  it('reports pool_id as null on a resource that has no pool', async () => {
+    const response = await api.createResource(aResource())
+    expect(response.json()).toHaveProperty('pool_id', null)
+  })
+
   it('never leaks internal columns', async () => {
     const response = await api.createResource(aResource())
     expect(Object.keys(response.json()).sort()).toEqual([
@@ -68,6 +73,7 @@ describe('POST /resources', () => {
       'concurrency_mode',
       'id',
       'is_active',
+      'pool_id',
       'slot_anchor_time',
       'slot_duration',
       'timezone',
