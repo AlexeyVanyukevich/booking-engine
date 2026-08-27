@@ -77,7 +77,7 @@ describe('pools', () => {
     {
       name: 'an exception',
       call: (id: string) =>
-        api.putException(id, '2026-09-01', { start_time: null, end_time: null }),
+        api.putException(id, { date: '2026-09-01', start_time: null, end_time: null }),
     },
   ])('refuses $name on a pool', async ({ call }) => {
     const pool = (await api.createResource(poolBase)).json()

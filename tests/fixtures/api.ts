@@ -75,26 +75,9 @@ export class Api {
   putException(
     id: string,
     exception: ExceptionInput | ({ date: string } & Record<string, unknown>),
-  ): ReturnType<Transport>
-  putException(
-    id: string,
-    date: string,
-    body: { start_time: string | null; end_time: string | null },
-  ): ReturnType<Transport>
-  putException(
-    id: string,
-    dateOrException: string | (ExceptionInput | ({ date: string } & Record<string, unknown>)),
-    body?: { start_time: string | null; end_time: string | null },
   ) {
-    if (typeof dateOrException === 'string') {
-      return this.send({
-        method: 'PUT',
-        url: `/resources/${id}/exceptions/${dateOrException}`,
-        payload: body,
-      })
-    }
-    const { date, ...rest } = dateOrException
-    return this.send({ method: 'PUT', url: `/resources/${id}/exceptions/${date}`, payload: rest })
+    const { date, ...body } = exception
+    return this.send({ method: 'PUT', url: `/resources/${id}/exceptions/${date}`, payload: body })
   }
 
   deleteException(id: string, date: string) {
