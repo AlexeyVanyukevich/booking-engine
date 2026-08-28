@@ -137,6 +137,53 @@ export class BookingRepository {
     })
   }
 
+  /**
+   * The pool equivalent. Two differences, both load-bearing.
+   *
+   * The in-transaction sweep runs across the pool's **members**, not the pool row: an expired
+   * hold on a member still blocks it until something moves it out of `held`, and selection
+   * would otherwise skip a member that is in fact free — the exact failure spec 2's inline
+   * sweep exists to prevent, one level down.
+   *
+   * The pool row is locked only when the caller asks, which is only when an idempotency key
+   * is present. Capacity is derived rather than counted, so nothing else needs it.
+   */
+  async inPoolWriteTransaction<T>(
+    tenantId: string,
+    poolId: string,
+    lockPool: boolean,
+    work: (trx: Trx, pool: ResourceRow | undefined) => Promise<T>,
+  ): Promise<T> {
+    return this.db.transaction().execute(async (trx) => {
+      const query = trx
+        .selectFrom('resources')
+        .select(resourceColumns)
+        .where('tenant_id', '=', tenantId)
+        .where('id', '=', poolId)
+      const pool = await (lockPool ? query.forUpdate() : query).executeTakeFirst()
+
+      // `FOR UPDATE OF bookings` keeps the lock off the joined `resources` rows — without it
+      // Postgres locks both sides, and a concurrent PATCH on a member would contend needlessly.
+      await trx
+        .updateTable('bookings')
+        .set({ status: 'expired', updated_at: now() })
+        .where('id', 'in', (eb) =>
+          eb
+            .selectFrom('bookings')
+            .select('bookings.id')
+            .innerJoin('resources', 'resources.id', 'bookings.resource_id')
+            .where('resources.pool_id', '=', poolId)
+            .where('bookings.status', '=', 'held')
+            .where('bookings.held_until', '<=', sql<Date>`now()`)
+            .orderBy('bookings.id')
+            .forUpdate('bookings'),
+        )
+        .execute()
+
+      return work(trx, pool)
+    })
+  }
+
   async insert(trx: Trx, values: NewBooking): Promise<BookingRow> {
     return trx.insertInto('bookings').values(values).returning(columns).executeTakeFirstOrThrow()
   }
@@ -229,6 +276,21 @@ export class BookingRepository {
       .where('resource_id', '=', resourceId)
       .where('idempotency_key', '=', key)
       .executeTakeFirst()
+  }
+
+  /**
+   * Deliberate stub: a pool has no idempotency index of its own yet, so this always answers
+   * "no existing booking" and every pool booking is treated as new. Task 7 replaces this with
+   * the real query, over a key scoped to the pool rather than to one member. Kept obviously
+   * unfinished so it is not mistaken for completed work.
+   */
+  async findByPoolIdempotencyKey(
+    _trx: Trx,
+    _tenantId: string,
+    _poolId: string,
+    _key: string,
+  ): Promise<BookingRow | undefined> {
+    return undefined
   }
 
   /**

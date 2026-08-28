@@ -8,7 +8,14 @@ import {
   type PoolAvailabilityCase,
 } from '../fixtures/datasets/pool-availability.js'
 import { dayAfter, fallBacks } from '../fixtures/datasets/dst.js'
-import { buildTestApp, closeTestDb, resetDbWithTenant, testAuthorization } from './helpers.js'
+import { sql } from 'kysely'
+import {
+  buildTestApp,
+  closeTestDb,
+  getTestDb,
+  resetDbWithTenant,
+  testAuthorization,
+} from './helpers.js'
 
 let api: Api
 let close: () => Promise<void>
@@ -35,6 +42,21 @@ const poolBase = {
   concurrency_mode: 'pool' as const,
 }
 const memberBase = { ...poolBase, concurrency_mode: 'exclusive' as const }
+
+/** One day-based slot on the pool's own grid — 2026-07-20 is a Monday. */
+const night = {
+  start_time: '2026-07-20T14:00:00+02:00',
+  end_time: '2026-07-21T14:00:00+02:00',
+}
+
+/** As `bookings.test.ts`'s own `expireHold`: backdated against the database's clock. */
+async function expireHold(id: string): Promise<void> {
+  await getTestDb()
+    .updateTable('bookings')
+    .set({ held_until: sql<Date>`now() - interval '1 minute'` })
+    .where('id', '=', id)
+    .execute()
+}
 
 interface Slot {
   start: string
@@ -196,13 +218,8 @@ describe('pools', () => {
     expect(starts).toEqual([...starts].sort((a, b) => Date.parse(a) - Date.parse(b)))
   })
 
-  // Depends on Task 6 (booking a pool). Un-skipped there.
-  it.skip('marks a slot unavailable once every member is booked', async () => {
+  it('marks a slot unavailable once every member is booked', async () => {
     const pool = await aPoolWith([{ windows: wholeWeek }, { windows: wholeWeek }])
-    const night = {
-      start_time: '2026-07-20T14:00:00+02:00',
-      end_time: '2026-07-21T14:00:00+02:00',
-    }
     expect((await api.createBooking(pool.id, night)).statusCode).toBe(201)
     expect(
       (await api.getAvailability(pool.id, '2026-07-20', '2026-07-21')).json().slots[0].available,
@@ -211,5 +228,57 @@ describe('pools', () => {
     expect(
       (await api.getAvailability(pool.id, '2026-07-20', '2026-07-21')).json().slots[0].available,
     ).toBe(false)
+  })
+
+  describe('booking a pool', () => {
+    it('books a member and reports the member as resource_id', async () => {
+      const pool = await aPoolWith([{ windows: wholeWeek }])
+      const response = await api.createBooking(pool.id, night)
+      expect(response.statusCode).toBe(201)
+      expect(response.json().resource_id).toBe(pool.memberIds[0])
+    })
+
+    it('answers outside_schedule when no member offers the run', async () => {
+      const pool = await aPoolWith([{ windows: [] }])
+      const response = await api.createBooking(pool.id, night)
+      expect(response.statusCode).toBe(400)
+      expect(response.json().error).toBe('outside_schedule')
+    })
+
+    it('answers slot_unavailable when every member that offers it is taken', async () => {
+      const pool = await aPoolWith([{ windows: wholeWeek }])
+      expect((await api.createBooking(pool.id, night)).statusCode).toBe(201)
+      const second = await api.createBooking(pool.id, night)
+      expect(second.statusCode).toBe(409)
+      expect(second.json().error).toBe('slot_unavailable')
+    })
+
+    it('gives two concurrent bookings different members', async () => {
+      const pool = await aPoolWith([{ windows: wholeWeek }, { windows: wholeWeek }])
+      const [a, b] = await Promise.all([
+        api.createBooking(pool.id, night),
+        api.createBooking(pool.id, night),
+      ])
+      expect([a.statusCode, b.statusCode].sort()).toEqual([201, 201])
+      expect(a.json().resource_id).not.toBe(b.json().resource_id)
+    })
+
+    it('gives the last free member to exactly one of two racing requests', async () => {
+      const pool = await aPoolWith([{ windows: wholeWeek }])
+      const [a, b] = await Promise.all([
+        api.createBooking(pool.id, night),
+        api.createBooking(pool.id, night),
+      ])
+      expect([a.statusCode, b.statusCode].sort()).toEqual([201, 409])
+    })
+
+    it('frees a member whose hold has expired, without waiting for the sweeper', async () => {
+      const pool = await aPoolWith([{ windows: wholeWeek }])
+      const held = (
+        await api.createBooking(pool.id, { ...night, hold: true, hold_minutes: 10 })
+      ).json()
+      await expireHold(held.id)
+      expect((await api.createBooking(pool.id, night)).statusCode).toBe(201)
+    })
   })
 })
