@@ -7,6 +7,7 @@ import {
   wholeWeek,
   type PoolAvailabilityCase,
 } from '../fixtures/datasets/pool-availability.js'
+import { dayAfter, fallBacks } from '../fixtures/datasets/dst.js'
 import { buildTestApp, closeTestDb, resetDbWithTenant, testAuthorization } from './helpers.js'
 
 let api: Api
@@ -141,6 +142,58 @@ describe('pools', () => {
     expect(slots.filter((s: Slot) => s.available).map((s: Slot) => s.start)).toEqual(
       scenario.availableStarts,
     )
+  })
+
+  /**
+   * Regression for the pool merge step sorting slot starts by their ISO-8601 *string* rather
+   * than the instant they denote. During a fall-back transition an intraday window straddling
+   * the ambiguous hour produces two slots with the same local wall-clock label at different
+   * offsets — e.g. `02:00+02:00` and `02:00+01:00` — and `'+01:00' < '+02:00'` lexicographically
+   * even though the `+02:00` instant comes first in real time. A single-resource query never
+   * shows this: `generateSlots` already sorts by instant. A pool does, because `computeForPool`
+   * merges each member's (correctly-sorted) slots into a map and re-sorts the result.
+   *
+   * The transition date and offsets come from `dst-transitions.json` — see
+   * `docs/conventions.md` on deriving facts about the outside world from the tz database rather
+   * than memory — not hardcoded here.
+   */
+  it("orders a pool's slots by the instant each denotes, not by the offset digits in its ISO string", async () => {
+    const warsawFallBack = fallBacks.find((t) => t.zone === 'Europe/Warsaw')!
+
+    const pool = (
+      await api.createResource({
+        timezone: warsawFallBack.zone,
+        slot_duration: 'PT30M',
+        concurrency_mode: 'pool',
+      })
+    ).json()
+    const member = (
+      await api.createResource({
+        timezone: warsawFallBack.zone,
+        slot_duration: 'PT30M',
+        concurrency_mode: 'exclusive',
+        pool_id: pool.id,
+      })
+    ).json()
+
+    // A window straddling the transition instant: local 01:00-04:00 covers the repeated
+    // 02:00-03:00 hour, which real time walks through twice at two different offsets.
+    await api.putException(member.id, {
+      date: warsawFallBack.date,
+      start_time: '01:00',
+      end_time: '04:00',
+    })
+
+    const slots = (
+      await api.getAvailability(pool.id, warsawFallBack.date, dayAfter(warsawFallBack.date))
+    ).json().slots as Slot[]
+    const starts = slots.map((slot) => slot.start)
+
+    // Not vacuous: the ambiguous hour really did produce slots at both offsets.
+    expect(starts.some((s) => s.endsWith(warsawFallBack.offsetBefore))).toBe(true)
+    expect(starts.some((s) => s.endsWith(warsawFallBack.offsetAfter))).toBe(true)
+
+    expect(starts).toEqual([...starts].sort((a, b) => Date.parse(a) - Date.parse(b)))
   })
 
   // Depends on Task 6 (booking a pool). Un-skipped there.

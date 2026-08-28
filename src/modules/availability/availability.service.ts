@@ -130,7 +130,9 @@ export class AvailabilityService {
     for (const { slots } of perMember) for (const slot of slots) everySlot.set(slot.start, slot)
     if (everySlot.size === 0) return { slots: [] }
 
-    const ordered = [...everySlot.values()].sort((a, b) => a.start.localeCompare(b.start))
+    const ordered = [...everySlot.values()].sort(
+      (a, b) => Date.parse(a.start) - Date.parse(b.start),
+    )
     const first = new Date(Math.min(...ordered.map((slot) => Date.parse(slot.start))))
     const last = new Date(Math.max(...ordered.map((slot) => Date.parse(slot.end))))
     const active = await this.bookings.activeInRangeForResources(pool.tenant_id, ids, first, last)
