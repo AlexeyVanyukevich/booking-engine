@@ -2,6 +2,7 @@ import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
 import { md } from '../../shared/docs.js'
 import { BookingRepository } from '../bookings/booking.repository.js'
 import { ExceptionRepository } from '../exceptions/exception.repository.js'
+import { PoolRepository } from '../resources/pool.repository.js'
 import { PoolService } from '../resources/pool.service.js'
 import { ResourceRepository } from '../resources/resource.repository.js'
 import { ErrorResponse, ResourceParams } from '../resources/resource.schemas.js'
@@ -18,6 +19,7 @@ export const availabilityRoutes: FastifyPluginAsyncTypebox = async (app) => {
     new ExceptionRepository(app.db),
     app.config.maxRangeDays,
     new BookingRepository(app.db),
+    new PoolRepository(app.db),
   )
 
   app.get(

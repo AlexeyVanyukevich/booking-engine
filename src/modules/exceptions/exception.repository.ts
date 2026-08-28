@@ -9,6 +9,7 @@ export interface ExceptionRow {
 }
 
 const columns = ['id', 'date', 'start_time', 'end_time'] as const
+const columnsWithResource = [...columns, 'resource_id'] as const
 
 export class ExceptionRepository {
   constructor(private readonly db: Kysely<Database>) {}
@@ -25,6 +26,25 @@ export class ExceptionRepository {
       .select(columns)
       .where('tenant_id', '=', tenantId)
       .where('resource_id', '=', resourceId)
+      .where('date', '>=', from)
+      .where('date', '<', to)
+      .orderBy('date')
+      .execute()
+  }
+
+  /** Same rows as `listInRange`, batched over several members and carrying `resource_id`. */
+  async listInRangeForResources(
+    tenantId: string,
+    resourceIds: string[],
+    from: string,
+    to: string,
+  ): Promise<Array<ExceptionRow & { resource_id: string }>> {
+    if (resourceIds.length === 0) return []
+    return this.db
+      .selectFrom('schedule_exceptions')
+      .select(columnsWithResource)
+      .where('tenant_id', '=', tenantId)
+      .where('resource_id', 'in', resourceIds)
       .where('date', '>=', from)
       .where('date', '<', to)
       .orderBy('date')

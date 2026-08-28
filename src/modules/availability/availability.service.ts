@@ -3,11 +3,12 @@ import { enumerateDates, formatTime, parseSlotDuration } from '../../shared/time
 import type { BookingRepository } from '../bookings/booking.repository.js'
 import { countOccupying } from '../bookings/occupancy.js'
 import type { ExceptionRepository } from '../exceptions/exception.repository.js'
+import type { PoolRepository } from '../resources/pool.repository.js'
 import type { ResourceRow } from '../resources/resource.repository.js'
 import type { ResourceService } from '../resources/resource.service.js'
 import type { ScheduleRepository } from '../schedule/schedule.repository.js'
 import type { AvailabilityResponse } from './availability.schemas.js'
-import { generateSlots } from './slot-generator.js'
+import { generateSlots, type Slot } from './slot-generator.js'
 import { resolveWindows } from './window-resolver.js'
 
 export class AvailabilityService {
@@ -17,6 +18,7 @@ export class AvailabilityService {
     private readonly exceptions: ExceptionRepository,
     private readonly maxRangeDays: number,
     private readonly bookings: BookingRepository,
+    private readonly pools: PoolRepository,
   ) {}
 
   async getAvailability(
@@ -44,6 +46,8 @@ export class AvailabilityService {
     // An inactive resource exists but is not bookable: 404 would be wrong, and returning
     // slots would be misleading.
     if (!resource.is_active) return { slots: [] }
+
+    if (resource.concurrency_mode === 'pool') return this.computeForPool(resource, from, to)
 
     const [scheduleRows, exceptionRows] = await Promise.all([
       this.schedule.listByResource(resource.tenant_id, resource.id),
@@ -78,6 +82,70 @@ export class AvailabilityService {
       slots: slots.map((slot) => ({
         ...slot,
         available: countOccupying(active, slot) < resource.capacity,
+      })),
+    }
+  }
+
+  /**
+   * The union over the pool's active members: a slot is available when at least one of them
+   * offers it and has no conflicting booking. Three queries whatever the member count —
+   * members carry different schedules, so per-member windows genuinely have to be resolved,
+   * but that does not need three round trips each.
+   */
+  private async computeForPool(
+    pool: ResourceRow,
+    from: string,
+    to: string,
+  ): Promise<AvailabilityResponse> {
+    const members = await this.pools.listMembers(pool.tenant_id, pool.id, true)
+    if (members.length === 0) return { slots: [] }
+
+    const ids = members.map((member) => member.id)
+    const dates = enumerateDates(from, to, pool.timezone)
+
+    const [scheduleRows, exceptionRows] = await Promise.all([
+      this.schedule.listByResourceIds(pool.tenant_id, ids),
+      this.exceptions.listInRangeForResources(pool.tenant_id, ids, from, to),
+    ])
+
+    // Every member shares the pool's grid, so the slot list is the same for all of them and
+    // only the windows differ. Offered-by-member is therefore a set of slot starts.
+    const perMember = members.map((member) => ({
+      member,
+      slots: generateSlots({
+        dates,
+        windowsByDate: resolveWindows({
+          dates,
+          timezone: pool.timezone,
+          scheduleRows: scheduleRows.filter((row) => row.resource_id === member.id),
+          exceptionRows: exceptionRows.filter((row) => row.resource_id === member.id),
+        }),
+        timezone: pool.timezone,
+        slotDuration: parseSlotDuration(pool.slot_duration),
+        anchorTime: formatTime(pool.slot_anchor_time),
+      }),
+    }))
+
+    const everySlot = new Map<string, Slot>()
+    for (const { slots } of perMember) for (const slot of slots) everySlot.set(slot.start, slot)
+    if (everySlot.size === 0) return { slots: [] }
+
+    const ordered = [...everySlot.values()].sort((a, b) => a.start.localeCompare(b.start))
+    const first = new Date(Math.min(...ordered.map((slot) => Date.parse(slot.start))))
+    const last = new Date(Math.max(...ordered.map((slot) => Date.parse(slot.end))))
+    const active = await this.bookings.activeInRangeForResources(pool.tenant_id, ids, first, last)
+
+    return {
+      slots: ordered.map((slot) => ({
+        ...slot,
+        available: perMember.some(
+          ({ member, slots }) =>
+            slots.some((candidate) => candidate.start === slot.start) &&
+            countOccupying(
+              active.filter((booking) => booking.resource_id === member.id),
+              slot,
+            ) < member.capacity,
+        ),
       })),
     }
   }

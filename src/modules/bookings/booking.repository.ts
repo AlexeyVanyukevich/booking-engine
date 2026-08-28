@@ -192,6 +192,30 @@ export class BookingRepository {
       .execute()
   }
 
+  /** Same rows as `activeInRange`, batched over several members and carrying `resource_id`. */
+  async activeInRangeForResources(
+    tenantId: string,
+    resourceIds: string[],
+    start: Date,
+    end: Date,
+  ): Promise<Array<ActiveBooking & { resource_id: string }>> {
+    if (resourceIds.length === 0) return []
+    return this.db
+      .selectFrom('bookings')
+      .select(['id', 'resource_id', 'start_time', 'end_time'])
+      .where('tenant_id', '=', tenantId)
+      .where('resource_id', 'in', resourceIds)
+      .where('start_time', '<', end)
+      .where('end_time', '>', start)
+      .where((eb) =>
+        eb.or([
+          eb('status', '=', 'confirmed'),
+          eb.and([eb('status', '=', 'held'), eb('held_until', '>', sql<Date>`now()`)]),
+        ]),
+      )
+      .execute()
+  }
+
   async findByIdempotencyKey(
     trx: Trx,
     tenantId: string,

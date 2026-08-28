@@ -10,6 +10,7 @@ export interface ScheduleRow {
 }
 
 const columns = ['id', 'day_of_week', 'start_time', 'end_time'] as const
+const columnsWithResource = [...columns, 'resource_id'] as const
 
 export class ScheduleRepository {
   constructor(private readonly db: Kysely<Database>) {}
@@ -20,6 +21,22 @@ export class ScheduleRepository {
       .select(columns)
       .where('tenant_id', '=', tenantId)
       .where('resource_id', '=', resourceId)
+      .orderBy('day_of_week')
+      .orderBy('start_time')
+      .execute()
+  }
+
+  /** Same rows as `listByResource`, batched over several members and carrying `resource_id`. */
+  async listByResourceIds(
+    tenantId: string,
+    resourceIds: string[],
+  ): Promise<Array<ScheduleRow & { resource_id: string }>> {
+    if (resourceIds.length === 0) return []
+    return this.db
+      .selectFrom('schedule')
+      .select(columnsWithResource)
+      .where('tenant_id', '=', tenantId)
+      .where('resource_id', 'in', resourceIds)
       .orderBy('day_of_week')
       .orderBy('start_time')
       .execute()
