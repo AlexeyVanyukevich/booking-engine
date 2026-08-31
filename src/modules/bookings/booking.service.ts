@@ -126,7 +126,7 @@ export function capacityIsCounted(mode: ConcurrencyMode): boolean {
       return true
     case 'pool':
       throw new UnsupportedConcurrencyModeError(
-        'concurrency_mode "pool" is not implemented yet; a pool booking would be governed by neither the exclusion constraint nor the capacity count',
+        'A booking row reached the write path carrying concurrency_mode "pool"; member selection should have replaced it with the member\'s own "exclusive", and such a row would be governed by neither the exclusion constraint nor the capacity count',
         { concurrency_mode: mode },
       )
     default: {
