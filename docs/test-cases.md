@@ -19,8 +19,9 @@ The **Covered by** column names the automated test that asserts the same thing. 
 **gap** are not automated; they are the ones worth running by hand before a release.
 
 Sections 1 to 7 are the engine's scheduling behaviour, from specs 1 and 2. Section 8 is spec
-4 — authentication, scopes, tenant isolation and the console — and is the one section whose
-cases need two tenants and several keys to run.
+3 — the `pool` concurrency mode: membership, availability, member selection and pool-wide
+idempotency. Section 9 is spec 4 — authentication, scopes, tenant isolation and the console —
+and is the one section whose cases need two tenants and several keys to run.
 
 Where the column names a dataset — `resources.test.ts ← acceptedResources` — that dataset is
 also replayed against a live engine by `./run smoke`. Adding a row there extends the test
@@ -84,54 +85,54 @@ Chain for every case in this section:
 
 ### Accepted
 
-| ID         | Case                      | Body (differences from base)                                                         | Expected                                                                                                                          | Covered by                                |
-| ---------- | ------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| TC-RES-C01 | Minimal intraday resource | `{"timezone":"Europe/Warsaw","slot_duration":"PT1H","concurrency_mode":"exclusive"}` | `201`; `capacity: 1`, `slot_anchor_time: "00:00"`, `is_active: true`                                                              | `resources.test.ts` ← `acceptedResources` |
-| TC-RES-C02 | Day-based with anchor     | `slot_duration: "P1D"`, `slot_anchor_time: "14:00"`                                  | `201`, both echoed back                                                                                                           | same                                      |
-| TC-RES-C03 | Day-based, default anchor | `slot_duration: "P1D"`                                                               | `201`, `slot_anchor_time: "00:00"`                                                                                                | same                                      |
-| TC-RES-C04 | Weekly slot               | `slot_duration: "P7D"`, `slot_anchor_time: "16:00"`                                  | `201`                                                                                                                             | same                                      |
-| TC-RES-C05 | Shared with capacity      | `concurrency_mode: "shared"`, `capacity: 12`                                         | `201`, `capacity: 12`                                                                                                             | same                                      |
-| TC-RES-C06 | Shared with capacity 1    | `concurrency_mode: "shared"`, `capacity: 1`                                          | `201` — capacity 1 is legal for shared                                                                                            | same                                      |
-| TC-RES-C07 | Half-hour-offset zone     | `timezone: "Asia/Kolkata"`                                                           | `201`                                                                                                                             | same                                      |
-| TC-RES-C08 | UTC                       | `timezone: "UTC"`                                                                    | `201`                                                                                                                             | same                                      |
-| TC-RES-C09 | Southern hemisphere       | `timezone: "Pacific/Auckland"`                                                       | `201`                                                                                                                             | same                                      |
-| TC-RES-C10 | Legacy named zone         | `timezone: "CET"`                                                                    | `201` — named zones with DST rules are fine                                                                                       | same                                      |
-| TC-RES-C11 | Shortest slot             | `slot_duration: "PT1M"`                                                              | `201`                                                                                                                             | same                                      |
-| TC-RES-C12 | Longest intraday slot     | `slot_duration: "PT23H59M"`                                                          | `201`                                                                                                                             | same                                      |
-| TC-RES-C13 | Anchor at end of day      | `slot_duration: "P1D"`, `slot_anchor_time: "23:59"`                                  | `201`                                                                                                                             | same                                      |
-| TC-RES-C14 | Redundant zero component  | `slot_duration: "PT0H30M"`                                                           | `201`, **echoed back as `PT30M`** — durations are canonicalised                                                                   | same                                      |
-| TC-RES-C15 | Ids are unique            | Create two identical resources                                                       | Two different `id` values, both valid UUIDs                                                                                       | `resources.test.ts`                       |
-| TC-RES-C16 | No internal columns leak  | Create, inspect the response keys                                                    | Exactly `id, timezone, slot_duration, slot_anchor_time, capacity, concurrency_mode, is_active` — no `created_at`, no `updated_at` | `resources.test.ts`                       |
+| ID         | Case                      | Body (differences from base)                                                         | Expected                                                                                                                                   | Covered by                                |
+| ---------- | ------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| TC-RES-C01 | Minimal intraday resource | `{"timezone":"Europe/Warsaw","slot_duration":"PT1H","concurrency_mode":"exclusive"}` | `201`; `capacity: 1`, `slot_anchor_time: "00:00"`, `is_active: true`                                                                       | `resources.test.ts` ← `acceptedResources` |
+| TC-RES-C02 | Day-based with anchor     | `slot_duration: "P1D"`, `slot_anchor_time: "14:00"`                                  | `201`, both echoed back                                                                                                                    | same                                      |
+| TC-RES-C03 | Day-based, default anchor | `slot_duration: "P1D"`                                                               | `201`, `slot_anchor_time: "00:00"`                                                                                                         | same                                      |
+| TC-RES-C04 | Weekly slot               | `slot_duration: "P7D"`, `slot_anchor_time: "16:00"`                                  | `201`                                                                                                                                      | same                                      |
+| TC-RES-C05 | Shared with capacity      | `concurrency_mode: "shared"`, `capacity: 12`                                         | `201`, `capacity: 12`                                                                                                                      | same                                      |
+| TC-RES-C06 | Shared with capacity 1    | `concurrency_mode: "shared"`, `capacity: 1`                                          | `201` — capacity 1 is legal for shared                                                                                                     | same                                      |
+| TC-RES-C07 | Half-hour-offset zone     | `timezone: "Asia/Kolkata"`                                                           | `201`                                                                                                                                      | same                                      |
+| TC-RES-C08 | UTC                       | `timezone: "UTC"`                                                                    | `201`                                                                                                                                      | same                                      |
+| TC-RES-C09 | Southern hemisphere       | `timezone: "Pacific/Auckland"`                                                       | `201`                                                                                                                                      | same                                      |
+| TC-RES-C10 | Legacy named zone         | `timezone: "CET"`                                                                    | `201` — named zones with DST rules are fine                                                                                                | same                                      |
+| TC-RES-C11 | Shortest slot             | `slot_duration: "PT1M"`                                                              | `201`                                                                                                                                      | same                                      |
+| TC-RES-C12 | Longest intraday slot     | `slot_duration: "PT23H59M"`                                                          | `201`                                                                                                                                      | same                                      |
+| TC-RES-C13 | Anchor at end of day      | `slot_duration: "P1D"`, `slot_anchor_time: "23:59"`                                  | `201`                                                                                                                                      | same                                      |
+| TC-RES-C14 | Redundant zero component  | `slot_duration: "PT0H30M"`                                                           | `201`, **echoed back as `PT30M`** — durations are canonicalised                                                                            | same                                      |
+| TC-RES-C15 | Ids are unique            | Create two identical resources                                                       | Two different `id` values, both valid UUIDs                                                                                                | `resources.test.ts`                       |
+| TC-RES-C16 | No internal columns leak  | Create, inspect the response keys                                                    | Exactly `id, timezone, slot_duration, slot_anchor_time, capacity, concurrency_mode, pool_id, is_active` — no `created_at`, no `updated_at` | `resources.test.ts`                       |
 
 ### Rejected
 
 All return `400` with the uniform error body.
 
-| ID         | Case                        | Body difference                                       | `error`                                                       | Covered by                                |
-| ---------- | --------------------------- | ----------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------- |
-| TC-RES-R01 | Unknown zone                | `timezone: "Mars/Olympus"`                            | `validation_error`                                            | `resources.test.ts` ← `rejectedResources` |
-| TC-RES-R02 | Fixed offset as zone        | `timezone: "+02:00"`                                  | `validation_error` — an offset has no DST rules               | same                                      |
-| TC-RES-R03 | Negative fixed offset       | `timezone: "-05:00"`                                  | `validation_error`                                            | same                                      |
-| TC-RES-R04 | Compact fixed offset        | `timezone: "+0200"`                                   | `validation_error`                                            | same                                      |
-| TC-RES-R05 | Empty zone                  | `timezone: ""`                                        | `validation_error`                                            | same                                      |
-| TC-RES-R06 | 24 hours written as time    | `slot_duration: "PT24H"`                              | `validation_error` — a fixed 24 hours is not a calendar day   | same                                      |
-| TC-RES-R07 | Months                      | `slot_duration: "P1M"`                                | `validation_error`                                            | same                                      |
-| TC-RES-R08 | Days mixed with hours       | `slot_duration: "P1DT2H"`                             | `validation_error`                                            | same                                      |
-| TC-RES-R09 | Zero-length slot            | `slot_duration: "PT0M"`                               | `validation_error`                                            | same                                      |
-| TC-RES-R10 | Beyond the ceiling          | `slot_duration: "P367D"`                              | `validation_error`                                            | same                                      |
-| TC-RES-R11 | Exclusive with capacity > 1 | `concurrency_mode: "exclusive"`, `capacity: 3`        | `validation_error`                                            | same                                      |
-| TC-RES-R12 | Zero capacity               | `capacity: 0`                                         | `validation_error`                                            | same                                      |
-| TC-RES-R13 | Negative capacity           | `capacity: -1`                                        | `validation_error`                                            | same                                      |
-| TC-RES-R14 | Fractional capacity         | `capacity: 2.5`                                       | `validation_error`                                            | same                                      |
-| TC-RES-R15 | Pool mode                   | `concurrency_mode: "pool"`                            | `unsupported_concurrency_mode` — deferred to spec 3           | same                                      |
-| TC-RES-R16 | Unknown mode                | `concurrency_mode: "whatever"`                        | `validation_error`                                            | same                                      |
-| TC-RES-R17 | Anchor on intraday resource | `slot_duration: "PT30M"`, `slot_anchor_time: "14:00"` | `validation_error` — the anchor would be silently ignored     | same                                      |
-| TC-RES-R18 | Anchor with seconds         | `slot_anchor_time: "14:00:00"`                        | `validation_error`                                            | same                                      |
-| TC-RES-R19 | Anchor past end of day      | `slot_anchor_time: "24:00"`                           | `validation_error`                                            | same                                      |
-| TC-RES-R20 | Unknown field               | `colour: "blue"`                                      | `validation_error` — unknown fields are rejected, not ignored | same                                      |
-| TC-RES-R21 | Missing `timezone`          | field omitted                                         | `validation_error`                                            | `resources.test.ts`                       |
-| TC-RES-R22 | Missing `slot_duration`     | field omitted                                         | `validation_error`                                            | same                                      |
-| TC-RES-R23 | Missing `concurrency_mode`  | field omitted                                         | `validation_error`                                            | same                                      |
+| ID         | Case                        | Body difference                                       | `error`                                                                                                                | Covered by                                |
+| ---------- | --------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| TC-RES-R01 | Unknown zone                | `timezone: "Mars/Olympus"`                            | `validation_error`                                                                                                     | `resources.test.ts` ← `rejectedResources` |
+| TC-RES-R02 | Fixed offset as zone        | `timezone: "+02:00"`                                  | `validation_error` — an offset has no DST rules                                                                        | same                                      |
+| TC-RES-R03 | Negative fixed offset       | `timezone: "-05:00"`                                  | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R04 | Compact fixed offset        | `timezone: "+0200"`                                   | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R05 | Empty zone                  | `timezone: ""`                                        | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R06 | 24 hours written as time    | `slot_duration: "PT24H"`                              | `validation_error` — a fixed 24 hours is not a calendar day                                                            | same                                      |
+| TC-RES-R07 | Months                      | `slot_duration: "P1M"`                                | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R08 | Days mixed with hours       | `slot_duration: "P1DT2H"`                             | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R09 | Zero-length slot            | `slot_duration: "PT0M"`                               | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R10 | Beyond the ceiling          | `slot_duration: "P367D"`                              | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R11 | Exclusive with capacity > 1 | `concurrency_mode: "exclusive"`, `capacity: 3`        | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R12 | Zero capacity               | `capacity: 0`                                         | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R13 | Negative capacity           | `capacity: -1`                                        | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R14 | Fractional capacity         | `capacity: 2.5`                                       | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R15 | Pool with a stored capacity | `concurrency_mode: "pool"`, `capacity: 3`             | `validation_error` — a pool's capacity is derived from its active members and is never stored, so only `1` is accepted | same                                      |
+| TC-RES-R16 | Unknown mode                | `concurrency_mode: "whatever"`                        | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R17 | Anchor on intraday resource | `slot_duration: "PT30M"`, `slot_anchor_time: "14:00"` | `validation_error` — the anchor would be silently ignored                                                              | same                                      |
+| TC-RES-R18 | Anchor with seconds         | `slot_anchor_time: "14:00:00"`                        | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R19 | Anchor past end of day      | `slot_anchor_time: "24:00"`                           | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R20 | Unknown field               | `colour: "blue"`                                      | `validation_error` — unknown fields are rejected, not ignored                                                          | same                                      |
+| TC-RES-R21 | Missing `timezone`          | field omitted                                         | `validation_error`                                                                                                     | `resources.test.ts`                       |
+| TC-RES-R22 | Missing `slot_duration`     | field omitted                                         | `validation_error`                                                                                                     | same                                      |
+| TC-RES-R23 | Missing `concurrency_mode`  | field omitted                                         | `validation_error`                                                                                                     | same                                      |
 
 ---
 
@@ -538,7 +539,90 @@ on every commit.
 
 ---
 
-## 8. Authentication, tenancy and the console
+## 8. Pools
+
+_Spec 3._ A pool is a resource whose members are ordinary `exclusive` resources carrying
+`pool_id`. There are no new routes and no new scope: a pool and its members are booked,
+scheduled and read through the same endpoints every other resource uses.
+
+Base setup for most cases below: a day-based Warsaw pool (`P1D`, anchor `14:00`), with one or
+more `exclusive` members sharing that grid. `2026-07-20` is a Monday; a "night" is
+`2026-07-20T14:00+02:00 → 2026-07-21T14:00+02:00`.
+
+### 8.1 Membership
+
+| ID          | Case                                        | Setup                                                                                   | Expected                                                                                                        | Covered by                                |
+| ----------- | ------------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| TC-POOL-M01 | A member matching its pool is accepted      | `POST` a pool, `POST` a member with the same timezone/duration/anchor and `pool_id` set | `201`, the member's `pool_id` is the pool's id                                                                  | `pools.test.ts`                           |
+| TC-POOL-M02 | The target is not a pool                    | `pool_id` names an `exclusive` resource                                                 | `400 invalid_pool_membership`, `details.rule: "kind"`                                                           | `pools.test.ts` ← `rejectedMemberships`   |
+| TC-POOL-M03 | The joining resource is itself a pool       | Member's `concurrency_mode: "pool"`                                                     | `400`, `details.rule: "member_mode"`                                                                            | same                                      |
+| TC-POOL-M04 | The joining resource is shared              | Member's `concurrency_mode: "shared"`, `capacity: 4`                                    | `400`, `details.rule: "member_mode"`                                                                            | same                                      |
+| TC-POOL-M05 | The timezone differs from the pool's        | Member's `timezone: "UTC"`                                                              | `400`, `details.rule: "grid"`                                                                                   | same                                      |
+| TC-POOL-M06 | The slot duration differs                   | Member's `slot_duration: "PT1H"`                                                        | `400`, `details.rule: "grid"`                                                                                   | same                                      |
+| TC-POOL-M07 | The anchor differs                          | Member's `slot_anchor_time: "15:00"`                                                    | `400`, `details.rule: "grid"`                                                                                   | same                                      |
+| TC-POOL-M08 | An unknown or cross-tenant `pool_id`        | `pool_id` names a resource that does not exist in the caller's tenant                   | `400 invalid_pool_membership`, `details.rule: "tenant"` — the caller learns nothing about another tenant's rows | **gap**                                   |
+| TC-POOL-M09 | A pool cannot store a capacity other than 1 | `concurrency_mode: "pool"`, `capacity: 3`                                               | `400 validation_error` — see TC-RES-R15                                                                         | `resources.test.ts` ← `rejectedResources` |
+| TC-POOL-M10 | A member leaves its pool                    | `PATCH` the member with `pool_id: null`                                                 | `200`, `pool_id` is `null`                                                                                      | `pools.test.ts`                           |
+| TC-POOL-M11 | A pool refuses a schedule write             | `PUT .../schedule` on a pool                                                            | `400 validation_error`, message says the resource is a pool                                                     | `pools.test.ts`                           |
+| TC-POOL-M12 | A pool refuses an exception write           | `PUT .../exceptions/:date` on a pool                                                    | `400 validation_error`, message says the resource is a pool                                                     | same                                      |
+| TC-POOL-M13 | A pool's schedule still reads, as empty     | `GET .../schedule` on a pool                                                            | `200 []`                                                                                                        | `pools.test.ts`                           |
+| TC-POOL-M14 | A pool with members refuses to delete       | `DELETE` a pool that still has a member                                                 | `409 pool_has_members`                                                                                          | `pools.test.ts`                           |
+
+### 8.2 Availability — the union over active members
+
+Cases below are a dataset (`tests/fixtures/datasets/pool-availability.ts` ←
+`poolAvailabilityCases`), each entry a pool with one windows/days-off/active spec per member.
+
+| ID          | Case                                                | Members                                                    | Expected                                                                          | Covered by                                |
+| ----------- | --------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------- |
+| TC-POOL-A01 | A slot one member offers is offered by the pool     | One open Monday, one closed the whole week                 | The Monday slot is available                                                      | `pools.test.ts` ← `poolAvailabilityCases` |
+| TC-POOL-A02 | A day off on one member is covered by the other     | Both open every day; one has a day off on the 21st         | Every day's slot still available, the 21st included                               | same                                      |
+| TC-POOL-A03 | A day off on every member removes the slot          | Both open every day, both off on the 21st                  | No slot on the 21st                                                               | same                                      |
+| TC-POOL-A04 | An inactive member does not contribute              | One open every day but `is_active: false`, one closed      | No slot at all — the open member is disqualified by inactivity                    | same                                      |
+| TC-POOL-A05 | A pool with no members offers nothing               | Zero members                                               | `[]`                                                                              | same                                      |
+| TC-POOL-A06 | A slot goes unavailable once every member is booked | Two members, both open every day                           | First booking: slot stays `available: true`; second: `false`                      | `pools.test.ts`                           |
+| TC-POOL-A07 | Slots are ordered by instant, not by offset digits  | One member, an exception straddling a fall-back transition | Slot starts ascend by real time even though `+01:00` sorts after `+02:00` as text | `pools.test.ts` (regression)              |
+
+### 8.3 Booking a pool — member selection
+
+The check order distinguishes `invalid_slot_boundary` (no member's grid ever starts a slot at
+the requested instant) from `outside_schedule` (some member's grid does, but the run is not
+fully offered) — the same distinction a single resource draws, applied across the membership.
+See `docs/superpowers/specs/2026-08-27-pool-concurrency-design.md` §5.1 for why this needed an
+`_As built:_` correction after implementation.
+
+| ID          | Case                                                    | Setup                                                             | Expected                                                  | Covered by      |
+| ----------- | ------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------- | --------------- |
+| TC-POOL-B01 | Books a member, and reports the member as `resource_id` | One-member pool, book a night                                     | `201`, `resource_id` is the member's id, never the pool's | `pools.test.ts` |
+| TC-POOL-B02 | No member ever has a slot starting there                | A member with no windows at all, book the pool's own grid instant | `400 invalid_slot_boundary`                               | `pools.test.ts` |
+| TC-POOL-B03 | A start off every member's grid                         | Hourly pool, member open Mon 09:00–12:00, book 09:30–10:30        | `400 invalid_slot_boundary`                               | `pools.test.ts` |
+| TC-POOL-B04 | On-grid start, run not fully offered                    | Same member, book 11:00–13:00                                     | `400 outside_schedule`                                    | `pools.test.ts` |
+| TC-POOL-B05 | Every member that offers the run is already booked      | One-member pool, book the same night twice                        | Second is `409 slot_unavailable`                          | `pools.test.ts` |
+| TC-POOL-B06 | Two concurrent bookings land on different members       | Two-member pool, both bookings started before either is awaited   | Both `201`, different `resource_id`                       | `pools.test.ts` |
+| TC-POOL-B07 | The last free member goes to exactly one racer          | One-member pool, two concurrent bookings                          | One `201`, one `409`                                      | `pools.test.ts` |
+| TC-POOL-B08 | An expired hold frees its member without the sweeper    | Hold expired via SQL, no sweeper running, book again              | `201`                                                     | `pools.test.ts` |
+
+### 8.4 Idempotency across a pool
+
+The pool row, not the member, is locked before selection when a key is present — see
+[conventions.md](conventions.md#concurrency) and spec 3 §5.3 — so a replay can never land on a
+second member.
+
+| ID          | Case                                                       | Steps                                                       | Expected                        | Covered by      |
+| ----------- | ---------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------- | --------------- |
+| TC-POOL-I01 | Replaying a key returns the same booking, not a second one | Same key, twice, against a two-member pool                  | `201` then `200`, same `id`     | `pools.test.ts` |
+| TC-POOL-I02 | Concurrent replays never land on two members               | Same key, two concurrent requests against a two-member pool | One `200`, one `201`, same `id` | `pools.test.ts` |
+| TC-POOL-I03 | A replayed key describing a different booking is refused   | Same key, different `customer_id`                           | `409 idempotency_key_reused`    | `pools.test.ts` |
+
+### 8.5 The write-path assertion
+
+| ID          | Case                                                   | Steps                                     | Expected                                                                                                                                      | Covered by                |
+| ----------- | ------------------------------------------------------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| TC-POOL-N01 | A booking row can never carry `pool` at the write path | Call `capacityIsCounted('pool')` directly | Throws `UnsupportedConcurrencyModeError` — a pool booking always points at an `exclusive` member, so this is a bug assertion, not a live path | `pool-invariants.test.ts` |
+
+---
+
+## 9. Authentication, tenancy and the console
 
 _Spec 4._ Two planes: the engine on `:3000`, which every case above needs a key for, and the
 console on `127.0.0.1:3001`, which issues them and has no key of its own.
@@ -546,7 +630,7 @@ console on `127.0.0.1:3001`, which issues them and has no key of its own.
 Cases here need two tenants and several keys, so they set up through the console rather than
 with `mk()`. `CONSOLE=http://127.0.0.1:3001`.
 
-### 8.1 Authentication
+### 9.1 Authentication
 
 | ID         | Case                           | Steps                                                                                                                                           | Expected                                                                         | Covered by        |
 | ---------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------- |
@@ -561,7 +645,7 @@ with `mk()`. `CONSOLE=http://127.0.0.1:3001`.
 | TC-AUTH-09 | Only the hash is stored        | Issue a key, then read the `api_keys` row                                                                                                       | `key_hash` and `key_prefix` are there; the secret half is nowhere                | `tenants.test.ts` |
 | TC-AUTH-10 | Key shape                      | `bk_live_` + 8-character prefix + 43-character secret. Reject: empty, marker only, `bk_test_`, wrong length, non-alphanumeric, trailing newline | Parsed only in the exact shape; a trailing newline never parses                  | `api-key.test.ts` |
 
-### 8.2 Scopes
+### 9.2 Scopes
 
 | ID        | Case                                    | Steps                                                                               | Expected                                                                           | Covered by                             |
 | --------- | --------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------- |
@@ -574,7 +658,7 @@ with `mk()`. `CONSOLE=http://127.0.0.1:3001`.
 | TC-SCP-07 | A repeated scope is deduplicated        | Issue with the same scope twice                                                     | Stored once                                                                        | same                                   |
 | TC-SCP-08 | The vocabulary is one list              | The eight scopes in `scopes.ts` against the CHECK in `003_tenancy.ts`               | Identical sets; every scope is reachable through at least one preset               | `scopes.test.ts`, `migrations.test.ts` |
 
-### 8.3 Tenant isolation
+### 9.3 Tenant isolation
 
 Two tenants, A and B, each with an all-scopes key. Every case asks whether B can see or touch
 something of A's.
@@ -589,7 +673,7 @@ something of A's.
 | TC-ISO-06 | Neither capacity nor overlap leaks across     | A resource per tenant with identical times; both book the same night                             | Both `201`. Neither the exclusion constraint nor the capacity count reaches over                           | same                |
 | TC-ISO-07 | Every written row carries the caller's tenant | Create a resource, a schedule, an exception and a booking as A; read `tenant_id` from each table | All four match A, so the denormalised column cannot drift from the composite foreign key                   | same                |
 
-### 8.4 The console
+### 9.4 The console
 
 `GET` is a page, every write is a form post answered with `303`, and the whole thing works
 with JavaScript switched off.
@@ -615,7 +699,7 @@ with JavaScript switched off.
 | TC-CON-17 | Reads ignore the origin                 | `GET` any page with a foreign `Origin`                                                                                                      | Unaffected — the guard is for writes                                                                                                                                                                                     | same                              |
 | TC-CON-18 | Errors are pages, not JSON              | A malformed uuid; a well-formed unknown tenant; an unknown path                                                                             | `400`, `404`, `404`, each an HTML page rather than a stack trace or a JSON body                                                                                                                                          | same                              |
 
-### 8.5 The console in a real browser
+### 9.5 The console in a real browser
 
 Playwright, run by `./run test:ui`. It needs a browser binary, which is why it is not part of
 `./run check` — see the README. These are the promises a request-level test cannot check.
@@ -635,7 +719,7 @@ Playwright, run by `./run test:ui`. It needs a browser binary, which is why it i
 
 ---
 
-## 9. Error contract
+## 10. Error contract
 
 | ID        | Case                                 | Steps                                                      | Expected                                                                                  | Covered by              |
 | --------- | ------------------------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------- |
@@ -649,7 +733,7 @@ Playwright, run by `./run test:ui`. It needs a browser binary, which is why it i
 
 ---
 
-## 10. Persistence
+## 11. Persistence
 
 Verified against the database directly rather than through HTTP.
 
@@ -675,7 +759,7 @@ Verified against the database directly rather than through HTTP.
 
 ---
 
-## 11. End-to-end journeys
+## 12. End-to-end journeys
 
 Full chains, run in order, as an acceptance pass before a release.
 
@@ -717,7 +801,7 @@ Full chains, run in order, as an acceptance pass before a release.
 
 ---
 
-## 12. Known gaps
+## 13. Known gaps
 
 Not covered by any automated test. Run these by hand, or automate them when the cost of a
 regression justifies it.

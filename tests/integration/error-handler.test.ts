@@ -62,9 +62,9 @@ describe('error responses', () => {
     },
     {
       name: 'a rejected business rule',
-      request: () => api.createResource(aResource({ concurrency_mode: 'pool' })),
+      request: () => api.createResource(aResource({ pool_id: unknownUuid() })),
       status: 400,
-      error: 'unsupported_concurrency_mode',
+      error: 'invalid_pool_membership',
     },
   ])('answers $name with $status $error', async ({ request, status, error }) => {
     const response = await request()

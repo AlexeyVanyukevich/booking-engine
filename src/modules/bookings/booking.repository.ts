@@ -137,6 +137,53 @@ export class BookingRepository {
     })
   }
 
+  /**
+   * The pool equivalent. Two differences, both load-bearing.
+   *
+   * The in-transaction sweep runs across the pool's **members**, not the pool row: an expired
+   * hold on a member still blocks it until something moves it out of `held`, and selection
+   * would otherwise skip a member that is in fact free — the exact failure spec 2's inline
+   * sweep exists to prevent, one level down.
+   *
+   * The pool row is locked only when the caller asks, which is only when an idempotency key
+   * is present. Capacity is derived rather than counted, so nothing else needs it.
+   */
+  async inPoolWriteTransaction<T>(
+    tenantId: string,
+    poolId: string,
+    lockPool: boolean,
+    work: (trx: Trx, pool: ResourceRow | undefined) => Promise<T>,
+  ): Promise<T> {
+    return this.db.transaction().execute(async (trx) => {
+      const query = trx
+        .selectFrom('resources')
+        .select(resourceColumns)
+        .where('tenant_id', '=', tenantId)
+        .where('id', '=', poolId)
+      const pool = await (lockPool ? query.forUpdate() : query).executeTakeFirst()
+
+      // `FOR UPDATE OF bookings` keeps the lock off the joined `resources` rows — without it
+      // Postgres locks both sides, and a concurrent PATCH on a member would contend needlessly.
+      await trx
+        .updateTable('bookings')
+        .set({ status: 'expired', updated_at: now() })
+        .where('id', 'in', (eb) =>
+          eb
+            .selectFrom('bookings')
+            .select('bookings.id')
+            .innerJoin('resources', 'resources.id', 'bookings.resource_id')
+            .where('resources.pool_id', '=', poolId)
+            .where('bookings.status', '=', 'held')
+            .where('bookings.held_until', '<=', sql<Date>`now()`)
+            .orderBy('bookings.id')
+            .forUpdate('bookings'),
+        )
+        .execute()
+
+      return work(trx, pool)
+    })
+  }
+
   async insert(trx: Trx, values: NewBooking): Promise<BookingRow> {
     return trx.insertInto('bookings').values(values).returning(columns).executeTakeFirstOrThrow()
   }
@@ -192,6 +239,30 @@ export class BookingRepository {
       .execute()
   }
 
+  /** Same rows as `activeInRange`, batched over several members and carrying `resource_id`. */
+  async activeInRangeForResources(
+    tenantId: string,
+    resourceIds: string[],
+    start: Date,
+    end: Date,
+  ): Promise<Array<ActiveBooking & { resource_id: string }>> {
+    if (resourceIds.length === 0) return []
+    return this.db
+      .selectFrom('bookings')
+      .select(['id', 'resource_id', 'start_time', 'end_time'])
+      .where('tenant_id', '=', tenantId)
+      .where('resource_id', 'in', resourceIds)
+      .where('start_time', '<', end)
+      .where('end_time', '>', start)
+      .where((eb) =>
+        eb.or([
+          eb('status', '=', 'confirmed'),
+          eb.and([eb('status', '=', 'held'), eb('held_until', '>', sql<Date>`now()`)]),
+        ]),
+      )
+      .execute()
+  }
+
   async findByIdempotencyKey(
     trx: Trx,
     tenantId: string,
@@ -204,6 +275,36 @@ export class BookingRepository {
       .where('tenant_id', '=', tenantId)
       .where('resource_id', '=', resourceId)
       .where('idempotency_key', '=', key)
+      .executeTakeFirst()
+  }
+
+  /**
+   * The replay lookup for a pool. It joins through `resources` because the caller sent the
+   * pool id and the booking carries a member id — the key spans the pool, while the unique
+   * index spans only `(resource_id, idempotency_key)`.
+   *
+   * Correct only under the pool row lock its caller takes: without it, two concurrent replays
+   * both miss here, claim different members, and both insert. That lock is the one place in
+   * the engine where a parent is held before a member, which is the ordering conventions.md
+   * records so that pools do not discover it as an intermittent deadlock.
+   */
+  async findByPoolIdempotencyKey(
+    trx: Trx,
+    tenantId: string,
+    poolId: string,
+    key: string,
+  ): Promise<BookingRow | undefined> {
+    return trx
+      .selectFrom('bookings')
+      .innerJoin('resources', (join) =>
+        join
+          .onRef('resources.id', '=', 'bookings.resource_id')
+          .onRef('resources.tenant_id', '=', 'bookings.tenant_id'),
+      )
+      .select(columns.map((column) => `bookings.${column}` as const))
+      .where('bookings.tenant_id', '=', tenantId)
+      .where('resources.pool_id', '=', poolId)
+      .where('bookings.idempotency_key', '=', key)
       .executeTakeFirst()
   }
 

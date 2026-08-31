@@ -11,6 +11,7 @@ export interface ResourceRow {
   capacity: number
   concurrency_mode: ConcurrencyMode
   is_active: boolean
+  pool_id: string | null
 }
 
 /**
@@ -26,6 +27,7 @@ export const resourceColumns = [
   'capacity',
   'concurrency_mode',
   'is_active',
+  'pool_id',
 ] as const
 
 export interface InsertResource {
@@ -35,6 +37,7 @@ export interface InsertResource {
   slot_anchor_time: string
   capacity: number
   concurrency_mode: ConcurrencyMode
+  pool_id?: string | null
 }
 
 export interface ListFilter {
@@ -46,6 +49,7 @@ export interface UpdateResource {
   slot_anchor_time?: string
   capacity?: number
   is_active?: boolean
+  pool_id?: string | null
 }
 
 export class ResourceRepository {

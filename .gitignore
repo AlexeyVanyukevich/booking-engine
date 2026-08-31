@@ -17,3 +17,6 @@ playwright-report/
 
 # PIDs and logs for `./run dev --bg`.
 .run/
+
+# Scratch for plan execution: ledgers, task briefs, review packages.
+.superpowers/

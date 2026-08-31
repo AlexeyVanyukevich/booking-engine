@@ -1,6 +1,8 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
 import { md } from '../../shared/docs.js'
 import { ExceptionRepository } from '../exceptions/exception.repository.js'
+import { PoolRepository } from '../resources/pool.repository.js'
+import { PoolService } from '../resources/pool.service.js'
 import { ResourceRepository } from '../resources/resource.repository.js'
 import { ErrorResponse, ResourceParams } from '../resources/resource.schemas.js'
 import { ResourceService } from '../resources/resource.service.js'
@@ -18,11 +20,16 @@ import {
 import { BookingService } from './booking.service.js'
 
 export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
+  const resourceRepository = new ResourceRepository(app.db)
   const service = new BookingService(
     new BookingRepository(app.db),
-    new ResourceService(new ResourceRepository(app.db)),
+    new ResourceService(
+      resourceRepository,
+      new PoolService(resourceRepository, new PoolRepository(app.db)),
+    ),
     new ScheduleRepository(app.db),
     new ExceptionRepository(app.db),
+    new PoolRepository(app.db),
     {
       defaultHoldMinutes: app.config.defaultHoldMinutes,
       maxHoldMinutes: app.config.maxHoldMinutes,

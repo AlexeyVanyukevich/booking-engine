@@ -3,6 +3,12 @@ import { bookingCapacitySuite, bookingTransitionsSuite, rejectedBookingsSuite } 
 import { acceptedExceptionsSuite, rejectedExceptionsSuite } from './exceptions.js'
 import { notFoundSuite, unknownRouteSuite } from './not-found.js'
 import {
+  poolBookingSuite,
+  poolDeletionSuite,
+  poolMembershipAcceptedSuite,
+  poolMembershipSuite,
+} from './pools.js'
+import {
   acceptedPatchesSuite,
   acceptedResourcesSuite,
   rejectedPatchesSuite,
@@ -37,6 +43,10 @@ export const suites: Array<Suite<any>> = [
   rejectedBookingsSuite,
   bookingCapacitySuite,
   bookingTransitionsSuite,
+  poolMembershipSuite,
+  poolMembershipAcceptedSuite,
+  poolBookingSuite,
+  poolDeletionSuite,
   notFoundSuite,
   unknownRouteSuite,
 ]

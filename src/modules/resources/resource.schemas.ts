@@ -42,10 +42,16 @@ const ConcurrencyMode = Type.Union(
   [Type.Literal('exclusive'), Type.Literal('shared'), Type.Literal('pool')],
   {
     description:
-      '`exclusive` — one booking per slot. `shared` — up to `capacity` per slot. `pool` — a group of interchangeable resources, **not implemented yet** and rejected with 400.',
+      '`exclusive` — one booking per slot. `shared` — up to `capacity` per slot. `pool` — a group of interchangeable resources; a booking against it lands on a member. Members carry `pool_id` and must be `exclusive`.',
     examples: ['exclusive'],
   },
 )
+
+const PoolId = Type.String({
+  format: 'uuid',
+  description:
+    'The pool this resource belongs to. The target must be a resource with `concurrency_mode: "pool"`, in the same tenant, and must share this resource\'s timezone, slot_duration and slot_anchor_time.',
+})
 
 export const ResourceParams = Type.Object({
   id: Type.String({ format: 'uuid', description: 'Resource id' }),
@@ -59,6 +65,7 @@ export const CreateResourceBody = Type.Object(
     slot_anchor_time: Type.Optional(SlotAnchorTime),
     capacity: Type.Optional(Capacity),
     concurrency_mode: ConcurrencyMode,
+    pool_id: Type.Optional(PoolId),
   },
   {
     additionalProperties: false,
@@ -88,6 +95,7 @@ export const UpdateResourceBody = Type.Object(
         description: 'Soft-disable. An inactive resource returns an empty slot list.',
       }),
     ),
+    pool_id: Type.Optional(Type.Union([PoolId, Type.Null()])),
   },
   { additionalProperties: false, examples: [{ is_active: false }] },
 )
@@ -104,6 +112,7 @@ export const ResourceResponse = Type.Object(
     capacity: Type.Integer(),
     concurrency_mode: Type.String(),
     is_active: Type.Boolean(),
+    pool_id: Type.Union([Uuid, Type.Null()]),
   },
   {
     examples: [
@@ -115,6 +124,7 @@ export const ResourceResponse = Type.Object(
         capacity: 1,
         concurrency_mode: 'exclusive',
         is_active: true,
+        pool_id: null,
       },
     ],
   },

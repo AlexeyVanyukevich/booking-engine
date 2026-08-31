@@ -19,6 +19,7 @@ import { assertValidRange } from '../../shared/range.js'
 import { generateSlots, type Slot } from '../availability/slot-generator.js'
 import { resolveWindows } from '../availability/window-resolver.js'
 import type { ExceptionRepository } from '../exceptions/exception.repository.js'
+import type { PoolRepository } from '../resources/pool.repository.js'
 import type { ResourceRow } from '../resources/resource.repository.js'
 import type { ResourceService } from '../resources/resource.service.js'
 import type { ScheduleRepository } from '../schedule/schedule.repository.js'
@@ -112,11 +113,12 @@ function gridError(error: BookingGridError, start: string, end: string): never {
  * It is exhaustive on purpose. Spec §12.1 records `pool` as fail-open: the exclusion
  * constraint's predicate names `exclusive` only, and the capacity count runs for `shared`
  * only, so a booking row carrying `pool` would be governed by neither and could overbook
- * without limit. Nothing can reach that today — a `pool` resource is refused at creation —
- * but the trap springs quietly, so it is closed here rather than merely written down. A
+ * without limit. A booking always points at a member, whose own mode is `exclusive`, so no
+ * row should ever reach here carrying `pool` — if one does, member selection is broken, and
+ * the trap springs quietly unless it is closed here rather than merely written down. A
  * fourth mode does not compile until this function decides what it means.
  */
-function capacityIsCounted(mode: ConcurrencyMode): boolean {
+export function capacityIsCounted(mode: ConcurrencyMode): boolean {
   switch (mode) {
     case 'exclusive':
       return false
@@ -124,7 +126,7 @@ function capacityIsCounted(mode: ConcurrencyMode): boolean {
       return true
     case 'pool':
       throw new UnsupportedConcurrencyModeError(
-        'concurrency_mode "pool" is not implemented yet; a pool booking would be governed by neither the exclusion constraint nor the capacity count',
+        'A booking row reached the write path carrying concurrency_mode "pool"; member selection should have replaced it with the member\'s own "exclusive", and such a row would be governed by neither the exclusion constraint nor the capacity count',
         { concurrency_mode: mode },
       )
     default: {
@@ -162,6 +164,7 @@ export class BookingService {
     private readonly resources: ResourceService,
     private readonly schedule: ScheduleRepository,
     private readonly exceptions: ExceptionRepository,
+    private readonly pools: PoolRepository,
     private readonly options: BookingOptions,
   ) {}
 
@@ -171,6 +174,9 @@ export class BookingService {
     body: CreateBookingBody,
   ): Promise<CreateResult> {
     const resource = await this.resources.loadOrFail(tenantId, resourceId)
+    if (resource.concurrency_mode === 'pool') {
+      return this.createInPool(tenantId, resource, body)
+    }
 
     const { start, end, slots } = await this.validateTarget(
       resource,
@@ -259,6 +265,144 @@ export class BookingService {
     return {
       booking: toBookingResponse(outcome.row, resource.timezone),
       created: outcome.created,
+    }
+  }
+
+  /**
+   * Booking a pool means: validate the interval against the pool's own grid, narrow to the
+   * members that offer the whole run, then claim one that is free.
+   *
+   * The check order is spec 3 §5.1, and it is what keeps `outside_schedule` and
+   * `slot_unavailable` meaning different things across a set of members rather than just one
+   * resource: the interval itself first (member-independent — every member shares the pool's
+   * timezone and grid), then which members offer the run at all (none → the pool answers as
+   * its members would, see below), then which of those is free (none → `slot_unavailable`,
+   * offered but taken).
+   */
+  private async createInPool(
+    tenantId: string,
+    pool: ResourceRow,
+    body: CreateBookingBody,
+  ): Promise<CreateResult> {
+    if (!pool.is_active) {
+      throw new ResourceInactiveError(`Resource ${pool.id} is not active and cannot be booked`, {
+        resource_id: pool.id,
+      })
+    }
+
+    // Step 1: the interval itself — shape and range — against the pool's own timezone. This is
+    // member-independent, since every member shares the pool's grid, and is decided before any
+    // member is loaded. Boundary alignment is necessarily per-member: `conventions.md` anchors
+    // the slot grid per window, not globally, so whether a given instant starts a slot depends
+    // on which windows that member has open — exactly what step 2 resolves next.
+    const { start, end } = this.parseInterval(body.start_time, body.end_time, pool.timezone)
+
+    // Step 2: the members that offer the whole run. A pool must answer as its members would:
+    // for one resource, `checkAgainstGrid` already distinguishes "no slot begins here"
+    // (`invalid_slot_boundary` — TC-BK-R01 off-grid, TC-BK-R04 a day the resource does not
+    // work) from "a slot begins here, but the run is not fully offered" (`outside_schedule` —
+    // TC-BK-R03). A pool of such members must draw the same line: if every member that fails
+    // says nothing starts there, the pool has no slot starting there either, and the honest
+    // answer is `invalid_slot_boundary`; if even one member's grid starts a slot at that
+    // instant, the run *was* offered somewhere, and failing to complete it is `outside_schedule`.
+    const members = await this.pools.listMembers(tenantId, pool.id, true)
+    const offering: ResourceRow[] = []
+    const failures: BookingGridError[] = []
+    for (const member of members) {
+      const slots = await this.offeredSlots(member, body.start_time, body.end_time)
+      const check = checkAgainstGrid(slots, body.start_time, body.end_time)
+      if (check.ok) offering.push(member)
+      else failures.push(check.error)
+    }
+    if (offering.length === 0) {
+      if (failures.length > 0 && failures.every((error) => error === 'invalid_slot_boundary')) {
+        throw new InvalidSlotBoundaryError(
+          `No member of pool ${pool.id} has a slot starting at ${body.start_time}`,
+          { pool_id: pool.id, start_time: body.start_time, end_time: body.end_time },
+        )
+      }
+      throw new OutsideScheduleError(
+        `No member of pool ${pool.id} offers every slot between ${body.start_time} and ${body.end_time}`,
+        { pool_id: pool.id },
+      )
+    }
+
+    const holdMinutes = this.resolveHoldMinutes(body)
+    const key = body.idempotency_key ?? null
+
+    const outcome = await this.inPoolWrite(tenantId, pool.id, key !== null, async (trx, locked) => {
+      if (key !== null) {
+        const existing = await this.bookings.findByPoolIdempotencyKey(trx, tenantId, pool.id, key)
+        if (existing) return { row: this.sameOrFail(existing, body, start, end), created: false }
+      }
+
+      // From here on the decision is made on the pool row read inside the transaction, exactly
+      // as `create` does. The row this method opened with is older than the per-member scan
+      // above — N sequential round trips — so a PATCH retiring the pool, or a DELETE of an
+      // emptied one, commits inside a window that is not small.
+      const current = this.stillThere(locked, pool.id)
+      if (!current.is_active) {
+        throw new ResourceInactiveError(`Resource ${pool.id} is not active and cannot be booked`, {
+          resource_id: pool.id,
+        })
+      }
+
+      // Step 3: claim one. `undefined` means every member that offers the run is taken.
+      const memberId = await this.pools.claimMember(
+        trx,
+        tenantId,
+        pool.id,
+        offering.map((member) => member.id),
+        start,
+        end,
+      )
+      if (memberId === undefined) {
+        throw new SlotUnavailableError(
+          'Those slots are offered, but every member of the pool is already booked for them',
+          { pool_id: pool.id },
+        )
+      }
+
+      return {
+        row: await this.bookings.insert(trx, {
+          tenant_id: tenantId,
+          resource_id: memberId,
+          start_time: start,
+          end_time: end,
+          status: (holdMinutes === null ? 'confirmed' : 'held') as 'confirmed' | 'held',
+          customer_id: body.customer_id ?? null,
+          // The member's mode, never the pool's: a booking row carrying `pool` would be
+          // governed by neither the exclusion constraint nor the capacity count.
+          concurrency_mode: 'exclusive',
+          held_until: holdMinutes === null ? null : holdExpiry(holdMinutes),
+          idempotency_key: key,
+        }),
+        created: true,
+      }
+    })
+
+    return {
+      booking: toBookingResponse(outcome.row, pool.timezone),
+      created: outcome.created,
+    }
+  }
+
+  private async inPoolWrite<T>(
+    tenantId: string,
+    poolId: string,
+    lockPool: boolean,
+    work: (trx: Trx, pool: ResourceRow | undefined) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.bookings.inPoolWriteTransaction(tenantId, poolId, lockPool, work)
+    } catch (error) {
+      if (isOverlapViolation(error)) {
+        throw new SlotUnavailableError(
+          'Those slots are offered, but a member was taken between selection and the insert',
+          { pool_id: poolId },
+        )
+      }
+      rethrowContention(error, 'The booking')
     }
   }
 

@@ -1,8 +1,8 @@
 import { IANAZone } from 'luxon'
 import {
   NotFoundError,
+  PoolHasMembersError,
   ResourceHasBookingsError,
-  UnsupportedConcurrencyModeError,
   ValidationError,
   rethrowContention,
 } from '../../shared/errors.js'
@@ -12,6 +12,7 @@ import {
   parseSlotDuration,
   type SlotDuration,
 } from '../../shared/time.js'
+import type { PoolService } from './pool.service.js'
 import type { ResourceRepository, ResourceRow } from './resource.repository.js'
 import type {
   CreateResourceBody,
@@ -89,6 +90,13 @@ function isBookingReference(error: unknown): boolean {
   return candidate.code === '23503' && candidate.constraint === 'bookings_resource_fk'
 }
 
+/** A delete blocked by a member still carrying this resource's id as its `pool_id`. */
+function isMemberReference(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const candidate = error as { code?: unknown; constraint?: unknown }
+  return candidate.code === '23503' && candidate.constraint === 'resources_pool_fk'
+}
+
 export function toResponse(row: ResourceRow): ResourceResponse {
   return {
     id: row.id,
@@ -98,19 +106,17 @@ export function toResponse(row: ResourceRow): ResourceResponse {
     capacity: row.capacity,
     concurrency_mode: row.concurrency_mode,
     is_active: row.is_active,
+    pool_id: row.pool_id,
   }
 }
 
 export class ResourceService {
-  constructor(private readonly repository: ResourceRepository) {}
+  constructor(
+    private readonly repository: ResourceRepository,
+    private readonly pools: PoolService,
+  ) {}
 
   async create(tenantId: string, body: CreateResourceBody): Promise<ResourceResponse> {
-    if (body.concurrency_mode === 'pool') {
-      throw new UnsupportedConcurrencyModeError(
-        'concurrency_mode "pool" is not implemented yet; storing a resource the engine cannot serve availability for would be worse than refusing it',
-      )
-    }
-
     assertNamedTimezone(body.timezone)
 
     const duration = parseDurationOrFail(body.slot_duration)
@@ -119,6 +125,19 @@ export class ResourceService {
 
     assertAnchorMatchesDuration(duration, anchor)
     assertCapacityMatchesMode(body.concurrency_mode, capacity)
+    this.pools.assertPoolShape(body.concurrency_mode, capacity)
+    if (body.pool_id !== undefined) {
+      await this.pools.assertMembership(
+        tenantId,
+        {
+          timezone: body.timezone,
+          slot_duration: duration.iso,
+          slot_anchor_time: anchor,
+          concurrency_mode: body.concurrency_mode,
+        },
+        body.pool_id,
+      )
+    }
 
     const row = await this.repository.insert({
       tenant_id: tenantId,
@@ -127,6 +146,7 @@ export class ResourceService {
       slot_anchor_time: anchor,
       capacity,
       concurrency_mode: body.concurrency_mode,
+      pool_id: body.pool_id ?? null,
     })
 
     return toResponse(row)
@@ -152,12 +172,32 @@ export class ResourceService {
 
     assertAnchorMatchesDuration(duration, anchor)
     assertCapacityMatchesMode(current.concurrency_mode, capacity)
+    this.pools.assertPoolShape(current.concurrency_mode, capacity)
+
+    const resulting = {
+      timezone: current.timezone,
+      slot_duration: duration.iso,
+      slot_anchor_time: anchor,
+      concurrency_mode: current.concurrency_mode,
+    }
+
+    // The two halves of the grid rule are mutually exclusive — a pool may not itself be a
+    // member — so this branch and the one below never both run.
+    if (current.concurrency_mode === 'pool') {
+      await this.pools.assertGridStableForMembers(tenantId, current, resulting)
+    }
+
+    const poolId = body.pool_id === undefined ? current.pool_id : body.pool_id
+    if (poolId !== null) {
+      await this.pools.assertMembership(tenantId, resulting, poolId)
+    }
 
     const row = await this.repository.update(tenantId, id, {
       slot_duration: duration.iso,
       slot_anchor_time: anchor,
       capacity,
       ...(body.is_active === undefined ? {} : { is_active: body.is_active }),
+      ...(body.pool_id === undefined ? {} : { pool_id: body.pool_id }),
     })
 
     if (!row) throw new NotFoundError(`Resource ${id} not found`)
@@ -169,6 +209,12 @@ export class ResourceService {
     try {
       deleted = await this.repository.delete(tenantId, id)
     } catch (error) {
+      if (isMemberReference(error)) {
+        throw new PoolHasMembersError(
+          `Pool ${id} still has members; move them out with PATCH pool_id: null before deleting it`,
+          { pool_id: id },
+        )
+      }
       if (isBookingReference(error)) {
         throw new ResourceHasBookingsError(
           `Resource ${id} has bookings on record and cannot be deleted; set is_active to false to retire it instead`,

@@ -2,6 +2,7 @@ import type { Migration } from 'kysely/migration'
 import * as bookings from './002_bookings.js'
 import * as initial from './001_initial.js'
 import * as tenancy from './003_tenancy.js'
+import * as pools from './004_pools.js'
 
 /**
  * Migrations are listed explicitly instead of being discovered from disk. Kysely's
@@ -17,4 +18,5 @@ export const migrations: Record<string, Migration> = {
   '001_initial': initial,
   '002_bookings': bookings,
   '003_tenancy': tenancy,
+  '004_pools': pools,
 }

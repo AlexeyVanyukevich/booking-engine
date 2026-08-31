@@ -4,9 +4,24 @@ import {
   ValidationError,
 } from '../../shared/errors.js'
 import { formatTime, parseSlotDuration, type SlotDuration } from '../../shared/time.js'
+import type { ResourceRow } from '../resources/resource.repository.js'
 import type { ResourceService } from '../resources/resource.service.js'
 import type { ScheduleRepository, ScheduleRow } from './schedule.repository.js'
 import type { ScheduleRuleInput, ScheduleRuleResponse } from './schedule.schemas.js'
+
+/**
+ * A pool has no availability of its own — it is the union over its members, which is where
+ * the schedules live. Refusing rather than silently ignoring is design principle #8; a pool
+ * whose schedule was accepted and never consulted would be a lie the caller could not see.
+ */
+function assertNotPool(resource: ResourceRow): void {
+  if (resource.concurrency_mode === 'pool') {
+    throw new ValidationError(
+      `Resource ${resource.id} is a pool, and a pool has no schedule of its own; its availability is the union over its members`,
+      { resource_id: resource.id },
+    )
+  }
+}
 
 function toMinutes(time: string): number {
   const [hours, minutes] = time.split(':')
@@ -114,6 +129,7 @@ export class ScheduleService {
     rules: ScheduleRuleInput[],
   ): Promise<ScheduleRuleResponse[]> {
     const resource = await this.resources.loadOrFail(tenantId, resourceId)
+    assertNotPool(resource)
     validateScheduleSet(rules, parseSlotDuration(resource.slot_duration))
     const rows = await this.repository.replaceForResource(tenantId, resourceId, rules)
     return rows.map(toScheduleResponse)
