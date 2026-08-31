@@ -206,6 +206,21 @@ Step 1 is member-independent precisely because §3 forces every member onto the 
 boundary error is therefore a property of the request, answerable before a single member is
 considered, and it reads the same whether the pool has one member or two hundred.
 
+_As built:_ that is true of the interval shape — `end` after `start`, both parseable in the
+pool's own timezone — but not of boundary alignment. `conventions.md` anchors the slot grid
+**per window**, not globally, so whether a given instant starts a slot depends on which windows
+a member has open, and members differ there by design — that is the whole justification for
+the mode in §1. A boundary error is therefore not answerable before a member is considered
+after all. What was built: the pool narrows to the members that offer the run (step 2) and
+lets each answer as it would alone — `invalid_slot_boundary` when no slot starts at the
+requested instant, `outside_schedule` when one does but the run is not fully offered (compare
+TC-BK-R01/R04, off-grid or before a window opens, against TC-BK-R03, on-grid but incomplete).
+The pool then draws the same line over the whole membership: if every member that fails says
+so as `invalid_slot_boundary`, the pool has no slot starting there either, and answers the
+same; if even one member's grid starts a slot at that instant, the run _was_ offered
+somewhere, and the pool answers `outside_schedule`. A pool with no members, or none active,
+falls out the same way — no failure says otherwise, so the honest answer is `outside_schedule`.
+
 Step 2 asks the same question §6 asks — which members offer these slots — and uses the same
 batched window resolution, over the requested interval rather than a date range. It is one code
 path, called from both, for the reason spec 2 gave for reusing the grid in booking validation:

@@ -5,8 +5,9 @@ booking — and knows nothing about what is being booked. Domain-specific data l
 separate layer above, in its own tables referencing `resource_id`.
 
 This stage implements resources, weekly schedules, per-date exceptions, availability and
-bookings — creation, the lifecycle, hold expiry, reschedule, listings, and capacity for both
-`exclusive` and `shared`. The `pool` concurrency mode arrives in spec 3.
+bookings — creation, the lifecycle, hold expiry, reschedule, listings, and all three
+concurrency modes: `exclusive`, `shared`, and `pool`, a group of interchangeable resources
+booked as one, where a caller asks for an interval and the engine claims a free member.
 
 | Document                                           | What it holds                                                                       |
 | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -337,8 +338,10 @@ the first of them is 23 real hours long.
 
 ## Known limitations
 
-No windows crossing midnight, `pool` mode rejected until spec 3, no schedule history, bookings
-in the past are accepted, a schedule edit may orphan existing bookings, `shared` serializes
-writes per resource, no pagination on listings, no automatic completion. Each is deliberate,
-and the reasoning and cost to lift are tabulated in
+No windows crossing midnight, no schedule history, bookings in the past are accepted, a
+schedule edit may orphan existing bookings, `shared` serializes writes per resource, no
+pagination on listings, no automatic completion, a pool cannot report how many members are
+free, a pool cannot mix slicing parameters across members, a pool member must be `exclusive`,
+pool member selection order is not a contract, and pools cannot nest. Each is deliberate, and
+the reasoning and cost to lift are tabulated in
 [docs/conventions.md](docs/conventions.md#deliberate-limitations).
