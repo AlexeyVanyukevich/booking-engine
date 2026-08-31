@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Api } from '../fixtures/api.js'
-import { withAuthorization, injectTransport } from '../fixtures/transport.js'
+import {
+  withAuthorization,
+  injectTransport,
+  type TransportResponse,
+} from '../fixtures/transport.js'
 import {
   rejectedMemberships,
   rejectedPoolGridPatches,
@@ -434,6 +438,52 @@ describe('pools', () => {
       })
       expect(other.statusCode).toBe(409)
       expect(other.json().error).toBe('idempotency_key_reused')
+    })
+  })
+
+  /**
+   * The pool counterpart of `bookings.test.ts`'s "a resource changed while a booking is in
+   * flight". `createInPool` reads `pool.is_active` near the top and then walks the members one
+   * at a time before its transaction opens; a `PATCH` retiring the pool commits inside that
+   * window, and only the row read inside the transaction can see it.
+   *
+   * The request carries an idempotency key because that is what makes the in-transaction read a
+   * `SELECT … FOR UPDATE` — §5.3's parent-before-member lock. Without a key the pool row is read
+   * unlocked, so there is nothing for this test to block on and nothing to serialize against.
+   */
+  describe('a pool changed while a booking is in flight', () => {
+    it('refuses the booking when the pool was retired', async () => {
+      const pool = await aPoolWith([{ windows: wholeWeek }])
+      const pending: Array<Promise<TransportResponse>> = []
+
+      await getTestDb()
+        .transaction()
+        .execute(async (trx) => {
+          await trx
+            .selectFrom('resources')
+            .select('id')
+            .where('id', '=', pool.id)
+            .forUpdate()
+            .execute()
+          await trx
+            .updateTable('resources')
+            .set({ is_active: false })
+            .where('id', '=', pool.id)
+            .execute()
+          pending.push(api.createBooking(pool.id, { ...night, idempotency_key: 'k-4' }))
+          // Long enough for the request to read the pool, scan the members and then block on
+          // the lock. The update above is still uncommitted, so the reads it makes on the way
+          // there all see an active pool.
+          await new Promise((resolve) => setTimeout(resolve, 150))
+        })
+
+      const response = await pending[0]!
+      expect(response.statusCode).toBe(409)
+      expect(response.json().error).toBe('resource_inactive')
+
+      // Not just refused: nothing landed on a member of a retired pool.
+      const rows = await getTestDb().selectFrom('bookings').select('id').execute()
+      expect(rows).toEqual([])
     })
   })
 })

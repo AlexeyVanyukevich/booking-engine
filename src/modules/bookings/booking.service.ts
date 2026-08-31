@@ -330,10 +330,21 @@ export class BookingService {
     const holdMinutes = this.resolveHoldMinutes(body)
     const key = body.idempotency_key ?? null
 
-    const outcome = await this.inPoolWrite(tenantId, pool.id, key !== null, async (trx) => {
+    const outcome = await this.inPoolWrite(tenantId, pool.id, key !== null, async (trx, locked) => {
       if (key !== null) {
         const existing = await this.bookings.findByPoolIdempotencyKey(trx, tenantId, pool.id, key)
         if (existing) return { row: this.sameOrFail(existing, body, start, end), created: false }
+      }
+
+      // From here on the decision is made on the pool row read inside the transaction, exactly
+      // as `create` does. The row this method opened with is older than the per-member scan
+      // above — N sequential round trips — so a PATCH retiring the pool, or a DELETE of an
+      // emptied one, commits inside a window that is not small.
+      const current = this.stillThere(locked, pool.id)
+      if (!current.is_active) {
+        throw new ResourceInactiveError(`Resource ${pool.id} is not active and cannot be booked`, {
+          resource_id: pool.id,
+        })
       }
 
       // Step 3: claim one. `undefined` means every member that offers the run is taken.
@@ -380,12 +391,10 @@ export class BookingService {
     tenantId: string,
     poolId: string,
     lockPool: boolean,
-    work: (trx: Trx) => Promise<T>,
+    work: (trx: Trx, pool: ResourceRow | undefined) => Promise<T>,
   ): Promise<T> {
     try {
-      return await this.bookings.inPoolWriteTransaction(tenantId, poolId, lockPool, (trx) =>
-        work(trx),
-      )
+      return await this.bookings.inPoolWriteTransaction(tenantId, poolId, lockPool, work)
     } catch (error) {
       if (isOverlapViolation(error)) {
         throw new SlotUnavailableError(
