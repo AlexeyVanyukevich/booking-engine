@@ -9,6 +9,7 @@ import {
 } from '../fixtures/datasets/pool-availability.js'
 import { dayAfter, fallBacks } from '../fixtures/datasets/dst.js'
 import { sql } from 'kysely'
+import { WEEKDAYS, aWindow } from '../fixtures/schedules.js'
 import {
   buildTestApp,
   closeTestDb,
@@ -238,11 +239,17 @@ describe('pools', () => {
       expect(response.json().resource_id).toBe(pool.memberIds[0])
     })
 
-    it('answers outside_schedule when no member offers the run', async () => {
+    /**
+     * A member with no windows at all never starts a slot anywhere — the pool has to answer
+     * as that member would for a single-resource booking (`invalid_slot_boundary`, matching
+     * TC-BK-R04 "a date the resource does not work"), not `outside_schedule`: nothing here was
+     * ever offered to begin with, so there is no run to say "not fully offered".
+     */
+    it('answers invalid_slot_boundary when no member ever has a slot starting there', async () => {
       const pool = await aPoolWith([{ windows: [] }])
       const response = await api.createBooking(pool.id, night)
       expect(response.statusCode).toBe(400)
-      expect(response.json().error).toBe('outside_schedule')
+      expect(response.json().error).toBe('invalid_slot_boundary')
     })
 
     it('answers slot_unavailable when every member that offers it is taken', async () => {
@@ -279,6 +286,55 @@ describe('pools', () => {
       ).json()
       await expireHold(held.id)
       expect((await api.createBooking(pool.id, night)).statusCode).toBe(201)
+    })
+
+    /**
+     * A pool answers as its members do (`docs/conventions.md`'s `invalid_slot_boundary` vs
+     * `outside_schedule` distinction, applied to a set of members rather than one resource):
+     * `09:30-10:30` is off the hourly grid entirely — no member's schedule ever starts a slot
+     * there — while `11:00-13:00` starts on a boundary the member's window offers, but the
+     * window (09:00-12:00) does not cover the whole run.
+     */
+    describe('a pool whose one member is open Mon 09:00-12:00, hourly', () => {
+      async function anHourlyPool(): Promise<{ id: string }> {
+        const pool = (
+          await api.createResource({
+            timezone: 'Europe/Warsaw',
+            slot_duration: 'PT1H',
+            concurrency_mode: 'pool',
+          })
+        ).json()
+        const member = (
+          await api.createResource({
+            timezone: 'Europe/Warsaw',
+            slot_duration: 'PT1H',
+            concurrency_mode: 'exclusive',
+            pool_id: pool.id,
+          })
+        ).json()
+        await api.putSchedule(member.id, [aWindow(WEEKDAYS.monday, '09:00', '12:00')])
+        return { id: pool.id }
+      }
+
+      it('answers invalid_slot_boundary for a start off the grid', async () => {
+        const pool = await anHourlyPool()
+        const response = await api.createBooking(pool.id, {
+          start_time: '2026-07-20T09:30:00+02:00',
+          end_time: '2026-07-20T10:30:00+02:00',
+        })
+        expect(response.statusCode).toBe(400)
+        expect(response.json().error).toBe('invalid_slot_boundary')
+      })
+
+      it('answers outside_schedule for a run starting on the grid but extending past the window', async () => {
+        const pool = await anHourlyPool()
+        const response = await api.createBooking(pool.id, {
+          start_time: '2026-07-20T11:00:00+02:00',
+          end_time: '2026-07-20T13:00:00+02:00',
+        })
+        expect(response.statusCode).toBe(400)
+        expect(response.json().error).toBe('outside_schedule')
+      })
     })
   })
 })

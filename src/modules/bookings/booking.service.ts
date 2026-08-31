@@ -275,9 +275,9 @@ export class BookingService {
    * The check order is spec 3 §5.1, and it is what keeps `outside_schedule` and
    * `slot_unavailable` meaning different things across a set of members rather than just one
    * resource: the interval itself first (member-independent — every member shares the pool's
-   * timezone and grid), then which members offer the run at all (none → `outside_schedule`,
-   * the slots were never on offer by anyone), then which of those is free (none →
-   * `slot_unavailable`, offered but taken).
+   * timezone and grid), then which members offer the run at all (none → the pool answers as
+   * its members would, see below), then which of those is free (none → `slot_unavailable`,
+   * offered but taken).
    */
   private async createInPool(
     tenantId: string,
@@ -292,25 +292,35 @@ export class BookingService {
 
     // Step 1: the interval itself — shape and range — against the pool's own timezone. This is
     // member-independent, since every member shares the pool's grid, and is decided before any
-    // member is loaded. Boundary alignment is necessarily per-member: it depends on which
-    // windows that member has open, which is exactly what step 2 resolves next.
+    // member is loaded. Boundary alignment is necessarily per-member: `conventions.md` anchors
+    // the slot grid per window, not globally, so whether a given instant starts a slot depends
+    // on which windows that member has open — exactly what step 2 resolves next.
     const { start, end } = this.parseInterval(body.start_time, body.end_time, pool.timezone)
 
-    // Step 2: the members that offer the whole run. Every member shares the pool's grid — the
-    // same slot_duration, anchor and timezone — so a member that does not offer this exact run
-    // is indistinguishable, at member scope, between "closed at that boundary" and "off the
-    // grid entirely"; `checkAgainstGrid` reports both as `invalid_slot_boundary` for a single
-    // resource. What matters here is only whether *some* member offers it: none doing so means
-    // the run was never on offer anywhere in the pool, which is `outside_schedule` regardless
-    // of which specific reason each individual member failed for.
+    // Step 2: the members that offer the whole run. A pool must answer as its members would:
+    // for one resource, `checkAgainstGrid` already distinguishes "no slot begins here"
+    // (`invalid_slot_boundary` — TC-BK-R01 off-grid, TC-BK-R04 a day the resource does not
+    // work) from "a slot begins here, but the run is not fully offered" (`outside_schedule` —
+    // TC-BK-R03). A pool of such members must draw the same line: if every member that fails
+    // says nothing starts there, the pool has no slot starting there either, and the honest
+    // answer is `invalid_slot_boundary`; if even one member's grid starts a slot at that
+    // instant, the run *was* offered somewhere, and failing to complete it is `outside_schedule`.
     const members = await this.pools.listMembers(tenantId, pool.id, true)
     const offering: ResourceRow[] = []
+    const failures: BookingGridError[] = []
     for (const member of members) {
       const slots = await this.offeredSlots(member, body.start_time, body.end_time)
       const check = checkAgainstGrid(slots, body.start_time, body.end_time)
       if (check.ok) offering.push(member)
+      else failures.push(check.error)
     }
     if (offering.length === 0) {
+      if (failures.length > 0 && failures.every((error) => error === 'invalid_slot_boundary')) {
+        throw new InvalidSlotBoundaryError(
+          `No member of pool ${pool.id} has a slot starting at ${body.start_time}`,
+          { pool_id: pool.id, start_time: body.start_time, end_time: body.end_time },
+        )
+      }
       throw new OutsideScheduleError(
         `No member of pool ${pool.id} offers every slot between ${body.start_time} and ${body.end_time}`,
         { pool_id: pool.id },
@@ -330,6 +340,7 @@ export class BookingService {
       const memberId = await this.pools.claimMember(
         trx,
         tenantId,
+        pool.id,
         offering.map((member) => member.id),
         start,
         end,

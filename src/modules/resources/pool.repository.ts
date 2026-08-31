@@ -26,10 +26,15 @@ export class PoolRepository {
    * take different rows and neither waits, and a request arriving when one member is left
    * finds it locked, skips it, and returns nothing rather than blocking. There is no retry
    * loop — `bookings_no_overlap` remains the backstop, as spec 2 left it.
+   *
+   * `pool_id = poolId` re-verifies membership under the lock, not just at `candidateIds`'
+   * collection time: a member that left the pool between the caller's `listMembers` read and
+   * this claim is excluded here rather than possibly being claimed anyway.
    */
   async claimMember(
     trx: Trx,
     tenantId: string,
+    poolId: string,
     candidateIds: string[],
     start: Date,
     end: Date,
@@ -41,6 +46,7 @@ export class PoolRepository {
       .select('id')
       .where('tenant_id', '=', tenantId)
       .where('id', 'in', candidateIds)
+      .where('pool_id', '=', poolId)
       .where('is_active', '=', true)
       .where((eb) =>
         eb.not(
