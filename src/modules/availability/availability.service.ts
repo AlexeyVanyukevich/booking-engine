@@ -1,6 +1,6 @@
 import { assertValidRange } from '../../shared/range.js'
 import { enumerateDates, formatTime, parseSlotDuration } from '../../shared/time.js'
-import type { BookingRepository } from '../bookings/booking.repository.js'
+import type { ActiveBooking, BookingRepository } from '../bookings/booking.repository.js'
 import { countOccupying } from '../bookings/occupancy.js'
 import type { ExceptionRepository } from '../exceptions/exception.repository.js'
 import type { PoolRepository } from '../resources/pool.repository.js'
@@ -109,10 +109,17 @@ export class AvailabilityService {
     ])
 
     // Every member shares the pool's grid, so the slot list is the same for all of them and
-    // only the windows differ. Offered-by-member is therefore a set of slot starts.
-    const perMember = members.map((member) => ({
-      member,
-      slots: generateSlots({
+    // only the windows differ. Offered-by-member is therefore a set of slot starts: the merge
+    // below asks "does this member offer this start?" once per (slot, member) pair, and a
+    // linear scan of the member's own slot list there made the whole computation quadratic in
+    // the slot count. `PT30M` over `MAX_RANGE_DAYS` is 17,568 slots, so that S² term costs one
+    // authenticated GET seconds of blocked event loop — which every other tenant on the
+    // process waits out — for a result the same size either way.
+    const everySlot = new Map<string, Slot>()
+    const perMember: Array<{ member: ResourceRow; offered: Set<string> }> = []
+
+    for (const member of members) {
+      const slots = generateSlots({
         dates,
         windowsByDate: resolveWindows({
           dates,
@@ -123,11 +130,12 @@ export class AvailabilityService {
         timezone: pool.timezone,
         slotDuration: parseSlotDuration(pool.slot_duration),
         anchorTime: formatTime(pool.slot_anchor_time),
-      }),
-    }))
+      })
 
-    const everySlot = new Map<string, Slot>()
-    for (const { slots } of perMember) for (const slot of slots) everySlot.set(slot.start, slot)
+      for (const slot of slots) everySlot.set(slot.start, slot)
+      perMember.push({ member, offered: new Set(slots.map((slot) => slot.start)) })
+    }
+
     if (everySlot.size === 0) return { slots: [] }
 
     const ordered = [...everySlot.values()].sort(
@@ -137,16 +145,23 @@ export class AvailabilityService {
     const last = new Date(Math.max(...ordered.map((slot) => Date.parse(slot.end))))
     const active = await this.bookings.activeInRangeForResources(pool.tenant_id, ids, first, last)
 
+    // Keyed once for the same reason: re-filtering every active booking of every member, for
+    // every slot, is the other factor in that product.
+    const activeByMember = new Map<string, ActiveBooking[]>()
+    for (const booking of active) {
+      const mine = activeByMember.get(booking.resource_id)
+      if (mine === undefined) activeByMember.set(booking.resource_id, [booking])
+      else mine.push(booking)
+    }
+    const nothingBooked: ActiveBooking[] = []
+
     return {
       slots: ordered.map((slot) => ({
         ...slot,
         available: perMember.some(
-          ({ member, slots }) =>
-            slots.some((candidate) => candidate.start === slot.start) &&
-            countOccupying(
-              active.filter((booking) => booking.resource_id === member.id),
-              slot,
-            ) < member.capacity,
+          ({ member, offered }) =>
+            offered.has(slot.start) &&
+            countOccupying(activeByMember.get(member.id) ?? nothingBooked, slot) < member.capacity,
         ),
       })),
     }
