@@ -4,7 +4,8 @@ Every behaviour the engine promises, as a case that can be executed start to fin
 against a running instance — and a note on which automated test already covers it.
 
 - Rules referenced throughout: [conventions.md](conventions.md)
-- What each endpoint promises: [architecture.md](architecture.md)
+- What each endpoint promises: [openapi.json](../openapi.json), rendered at `/docs`
+- Why a contract has the shape it does: [architecture.md](architecture.md)
 
 ## How to read a case
 

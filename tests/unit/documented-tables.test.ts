@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import type { Kysely } from 'kysely'
+import { buildApp } from '../../src/app.js'
 import { loadAppConfig, loadConfig } from '../../src/config.js'
+import type { Database } from '../../src/db/schema.js'
 import * as errors from '../../src/shared/errors.js'
+import { SCOPES, type Scope } from '../../src/shared/scopes.js'
 import { tableWithHeader, unwrap } from '../fixtures/markdown.js'
 
 /**
@@ -110,6 +114,48 @@ describe('the error table in conventions.md', () => {
     const prose = readFileSync(new URL(CONVENTIONS, import.meta.url), 'utf8')
     expect(prose).toContain(`\`${errors.FALLBACK_CLIENT_ERROR_CODE}\``)
     expect(documented.has(`${errors.FALLBACK_CLIENT_ERROR_CODE} 400`)).toBe(false)
+  })
+})
+
+describe('the scope table in conventions.md', () => {
+  const table = tableWithHeader(CONVENTIONS, 'Scope', 'Routes')
+  const documented = table.rows.map((row) => unwrap(row[0]!))
+
+  /**
+   * The Routes column stays prose — "`POST` / `PATCH` / `DELETE /resources`", "every
+   * `POST /bookings/:id/...`" — because spelling all twenty out would make it unreadable for
+   * the person it is written for. So the routes themselves are not diffed here; that a route
+   * requires the scope it claims to is asserted by TC-SCP-03 in `auth.test.ts`, against the
+   * running engine.
+   *
+   * What is checked is the vocabulary: a scope the routes require and the table omits, a
+   * scope documented that no route uses, and drift from `SCOPES`.
+   */
+  async function scopesInUse(): Promise<Set<string>> {
+    const app = await buildApp({
+      config: { ...loadAppConfig({}), logLevel: 'silent' },
+      // No handler runs while routes register, so no query is built and nothing is
+      // dereferenced — the same reason the OpenAPI generator needs no connection.
+      db: {} as Kysely<Database>,
+    })
+    try {
+      await app.ready()
+      return new Set(
+        app.routeAuthorizations
+          .map((route) => route.scope)
+          .filter((scope): scope is Scope => scope !== undefined),
+      )
+    } finally {
+      await app.close()
+    }
+  }
+
+  it('documents every scope the routes require, and no scope nothing requires', async () => {
+    expect(documented.sort()).toEqual([...(await scopesInUse())].sort())
+  })
+
+  it('agrees with the scope vocabulary', () => {
+    expect(documented.sort()).toEqual([...SCOPES].sort())
   })
 })
 
