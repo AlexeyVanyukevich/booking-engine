@@ -1,6 +1,7 @@
 import { Type } from 'typebox'
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
 import { md } from '../../shared/docs.js'
+import { PoolRepository } from '../resources/pool.repository.js'
 import { PoolService } from '../resources/pool.service.js'
 import { ResourceRepository } from '../resources/resource.repository.js'
 import { ErrorResponse, ResourceParams } from '../resources/resource.schemas.js'
@@ -19,7 +20,10 @@ export const exceptionRoutes: FastifyPluginAsyncTypebox = async (app) => {
   const resourceRepository = new ResourceRepository(app.db)
   const service = new ExceptionService(
     new ExceptionRepository(app.db),
-    new ResourceService(resourceRepository, new PoolService(resourceRepository)),
+    new ResourceService(
+      resourceRepository,
+      new PoolService(resourceRepository, new PoolRepository(app.db)),
+    ),
     app.config.maxRangeDays,
   )
 

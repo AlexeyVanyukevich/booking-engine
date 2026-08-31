@@ -23,7 +23,10 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
   const resourceRepository = new ResourceRepository(app.db)
   const service = new BookingService(
     new BookingRepository(app.db),
-    new ResourceService(resourceRepository, new PoolService(resourceRepository)),
+    new ResourceService(
+      resourceRepository,
+      new PoolService(resourceRepository, new PoolRepository(app.db)),
+    ),
     new ScheduleRepository(app.db),
     new ExceptionRepository(app.db),
     new PoolRepository(app.db),

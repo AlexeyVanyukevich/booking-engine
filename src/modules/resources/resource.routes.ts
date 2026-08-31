@@ -1,6 +1,7 @@
 import { Type } from 'typebox'
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
 import { md } from '../../shared/docs.js'
+import { PoolRepository } from './pool.repository.js'
 import { PoolService } from './pool.service.js'
 import { ResourceRepository } from './resource.repository.js'
 import {
@@ -16,7 +17,10 @@ import { ResourceService } from './resource.service.js'
 
 export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
   const repository = new ResourceRepository(app.db)
-  const service = new ResourceService(repository, new PoolService(repository))
+  const service = new ResourceService(
+    repository,
+    new PoolService(repository, new PoolRepository(app.db)),
+  )
 
   app.post(
     '/resources',

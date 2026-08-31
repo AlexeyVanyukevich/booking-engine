@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Api } from '../fixtures/api.js'
 import { withAuthorization, injectTransport } from '../fixtures/transport.js'
-import { rejectedMemberships } from '../fixtures/datasets/pool-membership.js'
+import {
+  rejectedMemberships,
+  rejectedPoolGridPatches,
+} from '../fixtures/datasets/pool-membership.js'
 import {
   poolAvailabilityCases,
   wholeWeek,
@@ -111,6 +114,69 @@ describe('pools', () => {
     expect(response.statusCode).toBe(400)
     expect(response.json().error).toBe('invalid_pool_membership')
     expect(response.json().details).toMatchObject({ rule })
+  })
+
+  /**
+   * The same dataset through `PATCH`. Membership is mutable — spec 3 §3 explains why — so the
+   * four rules have to hold on the patch path as well as on create, and the rows above were
+   * only ever driven through `POST`. The joining resource is created standalone first and then
+   * repointed, since `concurrency_mode` and `timezone` cannot be patched.
+   */
+  it.each(rejectedMemberships)(
+    'refuses a patch joining a pool when $name',
+    async ({ member, pool, rule }) => {
+      const created = (await api.createResource({ ...poolBase, ...pool })).json()
+      const joining = (await api.createResource({ ...memberBase, ...member })).json()
+      const response = await api.patchResource(joining.id, { pool_id: created.id })
+      expect(response.statusCode).toBe(400)
+      expect(response.json().error).toBe('invalid_pool_membership')
+      expect(response.json().details).toMatchObject({ rule })
+    },
+  )
+
+  /**
+   * Rule 4 read from the pool's side. The grid invariant is consulted from two different rows —
+   * `computeForPool` generates slots with the pool's duration and anchor, while the booking path
+   * validates against the member's — so a pool free to move its own grid can advertise a slot it
+   * then refuses to book.
+   */
+  it.each(rejectedPoolGridPatches)(
+    'refuses a patch to a pool that has members when $name',
+    async ({ patch, fields }) => {
+      const pool = (await api.createResource(poolBase)).json()
+      await api.createResource({ ...memberBase, pool_id: pool.id })
+
+      const response = await api.patchResource(pool.id, patch)
+      expect(response.statusCode).toBe(400)
+      expect(response.json().error).toBe('invalid_pool_membership')
+      expect(response.json().details).toMatchObject({ rule: 'grid', fields, pool_id: pool.id })
+    },
+  )
+
+  it.each(rejectedPoolGridPatches)(
+    'accepts the same patch on a pool with no members when $name',
+    async ({ patch }) => {
+      const pool = (await api.createResource(poolBase)).json()
+      expect((await api.patchResource(pool.id, patch)).statusCode).toBe(200)
+    },
+  )
+
+  /** An inactive member can be reactivated, so it still holds the pool's grid in place. */
+  it('refuses a grid patch on a pool whose only member is inactive', async () => {
+    const pool = (await api.createResource(poolBase)).json()
+    const member = (await api.createResource({ ...memberBase, pool_id: pool.id })).json()
+    await api.patchResource(member.id, { is_active: false })
+
+    const response = await api.patchResource(pool.id, { slot_duration: 'P7D' })
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('invalid_pool_membership')
+  })
+
+  /** A patch that leaves the grid alone is not a membership question at all. */
+  it('still accepts a non-grid patch on a pool that has members', async () => {
+    const pool = (await api.createResource(poolBase)).json()
+    await api.createResource({ ...memberBase, pool_id: pool.id })
+    expect((await api.patchResource(pool.id, { is_active: false })).statusCode).toBe(200)
   })
 
   it('refuses a pool created with a capacity other than 1', async () => {

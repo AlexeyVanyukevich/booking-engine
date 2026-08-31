@@ -173,18 +173,23 @@ export class ResourceService {
     assertAnchorMatchesDuration(duration, anchor)
     assertCapacityMatchesMode(current.concurrency_mode, capacity)
     this.pools.assertPoolShape(current.concurrency_mode, capacity)
+
+    const resulting = {
+      timezone: current.timezone,
+      slot_duration: duration.iso,
+      slot_anchor_time: anchor,
+      concurrency_mode: current.concurrency_mode,
+    }
+
+    // The two halves of the grid rule are mutually exclusive — a pool may not itself be a
+    // member — so this branch and the one below never both run.
+    if (current.concurrency_mode === 'pool') {
+      await this.pools.assertGridStableForMembers(tenantId, current, resulting)
+    }
+
     const poolId = body.pool_id === undefined ? current.pool_id : body.pool_id
     if (poolId !== null) {
-      await this.pools.assertMembership(
-        tenantId,
-        {
-          timezone: current.timezone,
-          slot_duration: duration.iso,
-          slot_anchor_time: anchor,
-          concurrency_mode: current.concurrency_mode,
-        },
-        poolId,
-      )
+      await this.pools.assertMembership(tenantId, resulting, poolId)
     }
 
     const row = await this.repository.update(tenantId, id, {
