@@ -167,6 +167,11 @@ export const rejectedResources: RejectedResourceCase[] = [
     expectedError: 'validation_error',
   },
   {
+    name: 'pool mode with capacity above one',
+    overrides: { concurrency_mode: 'pool', capacity: 3 },
+    expectedError: 'validation_error',
+  },
+  {
     name: 'an unknown concurrency mode',
     overrides: { concurrency_mode: 'whatever' },
     expectedError: 'validation_error',
