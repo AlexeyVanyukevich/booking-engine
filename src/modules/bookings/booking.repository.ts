@@ -279,18 +279,33 @@ export class BookingRepository {
   }
 
   /**
-   * Deliberate stub: a pool has no idempotency index of its own yet, so this always answers
-   * "no existing booking" and every pool booking is treated as new. Task 7 replaces this with
-   * the real query, over a key scoped to the pool rather than to one member. Kept obviously
-   * unfinished so it is not mistaken for completed work.
+   * The replay lookup for a pool. It joins through `resources` because the caller sent the
+   * pool id and the booking carries a member id — the key spans the pool, while the unique
+   * index spans only `(resource_id, idempotency_key)`.
+   *
+   * Correct only under the pool row lock its caller takes: without it, two concurrent replays
+   * both miss here, claim different members, and both insert. That lock is the one place in
+   * the engine where a parent is held before a member, which is the ordering conventions.md
+   * records so that pools do not discover it as an intermittent deadlock.
    */
   async findByPoolIdempotencyKey(
-    _trx: Trx,
-    _tenantId: string,
-    _poolId: string,
-    _key: string,
+    trx: Trx,
+    tenantId: string,
+    poolId: string,
+    key: string,
   ): Promise<BookingRow | undefined> {
-    return undefined
+    return trx
+      .selectFrom('bookings')
+      .innerJoin('resources', (join) =>
+        join
+          .onRef('resources.id', '=', 'bookings.resource_id')
+          .onRef('resources.tenant_id', '=', 'bookings.tenant_id'),
+      )
+      .select(columns.map((column) => `bookings.${column}` as const))
+      .where('bookings.tenant_id', '=', tenantId)
+      .where('resources.pool_id', '=', poolId)
+      .where('bookings.idempotency_key', '=', key)
+      .executeTakeFirst()
   }
 
   /**

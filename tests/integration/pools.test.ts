@@ -337,4 +337,37 @@ describe('pools', () => {
       })
     })
   })
+
+  describe('idempotency across a pool', () => {
+    it('replays an idempotency key against a pool to the same booking', async () => {
+      const pool = await aPoolWith([{ windows: wholeWeek }, { windows: wholeWeek }])
+      const first = await api.createBooking(pool.id, { ...night, idempotency_key: 'k-1' })
+      const second = await api.createBooking(pool.id, { ...night, idempotency_key: 'k-1' })
+      expect(first.statusCode).toBe(201)
+      expect(second.statusCode).toBe(200)
+      expect(second.json().id).toBe(first.json().id)
+    })
+
+    it('does not create a second booking on another member when a key is replayed concurrently', async () => {
+      const pool = await aPoolWith([{ windows: wholeWeek }, { windows: wholeWeek }])
+      const [a, b] = await Promise.all([
+        api.createBooking(pool.id, { ...night, idempotency_key: 'k-2' }),
+        api.createBooking(pool.id, { ...night, idempotency_key: 'k-2' }),
+      ])
+      expect([a.statusCode, b.statusCode].sort()).toEqual([200, 201])
+      expect(a.json().id).toBe(b.json().id)
+    })
+
+    it('refuses a replayed key describing a different booking', async () => {
+      const pool = await aPoolWith([{ windows: wholeWeek }])
+      await api.createBooking(pool.id, { ...night, idempotency_key: 'k-3' })
+      const other = await api.createBooking(pool.id, {
+        ...night,
+        customer_id: 'someone-else',
+        idempotency_key: 'k-3',
+      })
+      expect(other.statusCode).toBe(409)
+      expect(other.json().error).toBe('idempotency_key_reused')
+    })
+  })
 })
