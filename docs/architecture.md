@@ -6,18 +6,20 @@ A domain-agnostic booking engine that operates on abstractions: resource, schedu
 
 ## Status
 
-This document describes the whole system. It is delivered in slices, each with its own spec in [superpowers/specs/](superpowers/specs/):
+This document is **authoritative for what the system does today**. Where it disagrees with a slice spec, this document is right and the spec is stale: a spec states what was decided on its date and is not revised to match later work. Closing such a gap means correcting this document, not consulting the spec.
 
-| Slice | Content                                                              | State           |
-| ----- | -------------------------------------------------------------------- | --------------- |
-| 1     | Resources, schedule, exceptions, availability                        | **Implemented** |
-| 2     | Bookings: `exclusive` and `shared`, lifecycle, hold expiry, listings | **Implemented** |
-| 3     | `pool` concurrency mode                                              | **Implemented** |
-| 4     | Multitenancy, API keys, the key console                              | **Implemented** |
+The system was delivered in four slices, all implemented:
 
-Where this document and a spec disagree about something already built, **the spec wins** — it was written against the implementation. This document stays the system-level map.
+| Slice | Content                                                              |
+| ----- | -------------------------------------------------------------------- |
+| 1     | Resources, schedule, exceptions, availability                        |
+| 2     | Bookings: `exclusive` and `shared`, lifecycle, hold expiry, listings |
+| 3     | `pool` concurrency mode                                              |
+| 4     | Multitenancy, API keys, the key console                              |
 
-Formats, error codes, the technology stack, code layout and testing rules are **not** repeated here. They live in [conventions.md](conventions.md), which applies to every slice.
+The specs in [superpowers/specs/](superpowers/specs/) are **decision records**. Read one to learn _why_ something has the shape it does — never to learn what it does. The executed plans in [superpowers/plans/archive/](superpowers/plans/archive/) are spent scaffolding, kept for provenance and outside the reading path.
+
+Formats, error codes, the technology stack, code layout and testing rules are **not** repeated here. They live in [conventions.md](conventions.md), authoritative on the same terms and applying to every slice.
 
 ---
 
@@ -76,19 +78,19 @@ The lookup index is partial, `WHERE revoked_at IS NULL`: authentication only eve
 
 An abstract bookable unit. Contains only the parameters the engine needs — no domain-specific fields.
 
-| Column           | Type                      | Description                                                                                                                                                                                                                                       |
-| ---------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| id               | UUID, PK                  |                                                                                                                                                                                                                                                   |
-| tenant_id        | UUID, FK → Tenant         | The owner. Unique on `(tenant_id, id)`, which the children reference                                                                                                                                                                              |
-| timezone         | text, NOT NULL            | **Named** IANA zone (e.g. `Europe/Warsaw`). Fixed offsets are rejected                                                                                                                                                                            |
-| is_active        | boolean, default true     | Soft-disable without deleting                                                                                                                                                                                                                     |
-| slot_duration    | interval, NOT NULL        | Booking quantum. `P1D` and `PT24H` are different values                                                                                                                                                                                           |
-| slot_anchor_time | time, NOT NULL, `00:00`   | Where a day-based resource's day begins — a hotel with 14:00 check-in                                                                                                                                                                             |
-| capacity         | integer, default 1        | Max concurrent bookings per slot                                                                                                                                                                                                                  |
-| concurrency_mode | text, NOT NULL            | `exclusive` · `shared` · `pool`                                                                                                                                                                                                                   |
-| pool_id          | UUID, FK → Resource, NULL | The pool this resource belongs to. NULL for a standalone resource and for a pool row itself. Composite FK on `(tenant_id, pool_id)`, `ON DELETE RESTRICT` — see [spec 3 §2](superpowers/specs/2026-08-27-pool-concurrency-design.md#2-data-model) |
-| created_at       | timestamptz, `now()`      |                                                                                                                                                                                                                                                   |
-| updated_at       | timestamptz, `now()`      |                                                                                                                                                                                                                                                   |
+| Column           | Type                      | Description                                                                                                                                                                       |
+| ---------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| id               | UUID, PK                  |                                                                                                                                                                                   |
+| tenant_id        | UUID, FK → Tenant         | The owner. Unique on `(tenant_id, id)`, which the children reference                                                                                                              |
+| timezone         | text, NOT NULL            | **Named** IANA zone (e.g. `Europe/Warsaw`). Fixed offsets are rejected                                                                                                            |
+| is_active        | boolean, default true     | Soft-disable without deleting                                                                                                                                                     |
+| slot_duration    | interval, NOT NULL        | Booking quantum. `P1D` and `PT24H` are different values                                                                                                                           |
+| slot_anchor_time | time, NOT NULL, `00:00`   | Where a day-based resource's day begins — a hotel with 14:00 check-in                                                                                                             |
+| capacity         | integer, default 1        | Max concurrent bookings per slot                                                                                                                                                  |
+| concurrency_mode | text, NOT NULL            | `exclusive` · `shared` · `pool`                                                                                                                                                   |
+| pool_id          | UUID, FK → Resource, NULL | The pool this resource belongs to. NULL for a standalone resource and for a pool row itself. Composite FK on `(tenant_id, pool_id)`, `ON DELETE RESTRICT`. Membership rules below |
+| created_at       | timestamptz, `now()`      |                                                                                                                                                                                   |
+| updated_at       | timestamptz, `now()`      |                                                                                                                                                                                   |
 
 **`slot_duration` is a real Postgres `interval`, not a minute count**, so that `P1D` and `PT24H` remain distinguishable — see [the duration grammar](conventions.md#duration-grammar) and [the timezone rules](conventions.md#timezones) for the formats and why they matter.
 
@@ -100,7 +102,9 @@ The slot grid for a date starts at the schedule window's `start_time`, or at `sl
 
 - **exclusive** (`capacity = 1`) — one slot, one booking. Doctor, tennis court.
 - **shared** (`capacity = N`) — one slot, up to N bookings. Group class, restaurant table.
-- **pool** — a group of interchangeable resources. Hotel rooms of the same type. A pool is a resource whose members are ordinary `exclusive` resources carrying a `pool_id` foreign key back to it, each with its own schedule, exceptions and `is_active`; the pool's capacity is derived from the count of its active members rather than stored; and `bookings.resource_id` always points at a member, never at the pool itself. Booking a pool claims a free member with `FOR UPDATE SKIP LOCKED`, availability is the union over active members, and an idempotency key locks the pool row before a member is selected, so a replayed key cannot land on two different members. Membership rules, the two pool-specific error codes and the full design are in [spec 3](superpowers/specs/2026-08-27-pool-concurrency-design.md).
+- **pool** — a group of interchangeable resources. Hotel rooms of the same type. A pool is a resource whose members are ordinary `exclusive` resources carrying a `pool_id` foreign key back to it, each with its own schedule, exceptions and `is_active`; the pool's capacity is derived from the count of its active members rather than stored; and `bookings.resource_id` always points at a member, never at the pool itself. Booking a pool claims a free member with `FOR UPDATE SKIP LOCKED`, availability is the union over active members, and an idempotency key locks the pool row before a member is selected, so a replayed key cannot land on two different members.
+
+The mode earns its place on one property that a scalar `capacity` cannot express: **a member can be individually unavailable.** Room 101 goes out of service on the 20th while 102 keeps selling. Ten interchangeable rooms with no such requirement are already expressible as `shared` with `capacity = 10`.
 
 **Domain layer** stores characteristics in its own tables:
 
@@ -117,6 +121,21 @@ TennisCourt
 ```
 
 The engine never sees these tables. Grouping, filtering, and categorization are the domain's responsibility.
+
+### Pool membership
+
+`pool_id` is set on `POST /resources` and changed on `PATCH /resources/:id`. It is **not** immutable, unlike `timezone` and `concurrency_mode`, because `DELETE /resources/:id` is refused once a resource has any booking — an immutable membership would strand a room that had ever been booked in its original pool forever, with the delete-and-recreate escape hatch closed to exactly the rows needing it.
+
+Four rules are checked whenever `pool_id` is set to a non-NULL value:
+
+1. **The target exists and belongs to the caller's tenant.** The composite foreign key already makes a cross-tenant pool unwritable; the service checks first so the answer is a `404` rather than a constraint violation, and so the caller learns nothing about other tenants.
+2. **The target is a pool** — `concurrency_mode = 'pool'`. Attaching a room to another room has no meaning here.
+3. **The joining resource is `exclusive`.** This forbids both nesting and a `shared` member. Derived capacity is a count of active members, true only while each holds one booking at a time.
+4. **The grid matches.** `timezone`, `slot_duration` and `slot_anchor_time` must be identical to the pool's, because a pool needs exactly one grid to validate a request against _before_ a member is chosen — otherwise `invalid_slot_boundary` would depend on which member was checked last. Members still differ where the mode's justification lives: schedule, exceptions and `is_active`.
+
+Rules 2 and 3 cannot be `CHECK` constraints because they read another row; rule 4 could be a trigger but is not, since cross-row rules live in services here. A patch that would break rule 4 — changing a member's `slot_duration`, or a pool's — is refused, because the engine validates the resulting state rather than the patch.
+
+**Members are first-class.** `GET /resources` lists them alongside pools, and `POST /resources/{memberId}/bookings` books one directly, which serves the domain that must honour "the guest asked for room 101". The accepted consequence is that the abstraction is porous: a caller can bypass selection.
 
 ### Schedule
 
@@ -316,11 +335,8 @@ What follows is what a schema cannot express: why a contract has the shape it do
 
 ---
 
-## Notes for spec 2
+## Implementation notes
 
-Collected while building spec 1, so they were not rediscovered later. All four were carried out; kept as the record of what spec 1 left standing:
-
-- **Done.** The exclusion constraint on `bookings` needs the `btree_gist` extension, to combine `uuid WITH =` and `tstzrange WITH &&` in one GiST index. The spec 1 migration does not create it — `002_bookings.ts` does, as its first statement.
-- **Done.** `DELETE /resources/:id` is currently a hard delete. Once bookings exist it must refuse to delete a resource that has any — it now answers `409 resource_has_bookings`, and the foreign key is `ON DELETE RESTRICT` behind it.
-- **Done.** Booking validation reuses the availability grid rather than duplicating it. The slot generator is already a pure function taking windows, a timezone, a duration and an anchor, so the boundary check should call it rather than reimplement the stepping — `booking.service.ts` calls `generateSlots`, and `booking-validator.ts` checks the request against the slots it produced. Neither reimplements the stepping, and the validator imports nothing from `src/db/`.
-- **Done.** Availability already returns `available: true` for every slot, so spec 2 changes behaviour without changing the response contract. It did: the flag became real and no field moved.
+- The exclusion constraint on `bookings` needs the `btree_gist` extension, to combine `uuid WITH =` and `tstzrange WITH &&` in one GiST index. `002_bookings.ts` creates it as its first statement.
+- `DELETE /resources/:id` answers `409 resource_has_bookings` once a resource has any booking, with `ON DELETE RESTRICT` behind it.
+- Booking validation reuses the availability grid rather than duplicating it: `booking.service.ts` calls `generateSlots`, and `booking-validator.ts` checks the request against the slots it produced. Neither reimplements the stepping, and the validator imports nothing from `src/db/`.
