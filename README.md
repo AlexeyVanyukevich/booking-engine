@@ -9,14 +9,23 @@ bookings — creation, the lifecycle, hold expiry, reschedule, listings, and all
 concurrency modes: `exclusive`, `shared`, and `pool`, a group of interchangeable resources
 booked as one, where a caller asks for an interval and the engine claims a free member.
 
-| Document                                           | What it holds                                                                       |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)       | The system: data model, lifecycle, availability, and why contracts have their shape |
-| [docs/conventions.md](docs/conventions.md)         | Rules that hold everywhere: formats, error shape, stack, layout, testing            |
-| [docs/test-cases.md](docs/test-cases.md)           | Every promised behaviour as a runnable case, with its automated coverage            |
-| [docs/superpowers/specs/](docs/superpowers/specs/) | One spec per slice — what it delivers and why it was decided that way               |
-| [docs/superpowers/plans/](docs/superpowers/plans/) | The task-by-task plan that implemented each spec                                    |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                 | Commit conventions and workflow                                                     |
+**Start here.** These two are authoritative for what the engine does today, and together they
+are the whole onboarding path:
+
+| Document                                     | What it holds                                                                       |
+| -------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [docs/architecture.md](docs/architecture.md) | The system: data model, lifecycle, availability, and why contracts have their shape |
+| [docs/conventions.md](docs/conventions.md)   | Rules that hold everywhere: formats, error shape, stack, layout, testing            |
+
+Reference, consulted rather than read through:
+
+| Document                                                           | What it holds                                                                        |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| [openapi.json](openapi.json)                                       | Every path, field and status code, generated from the schemas the routes validate    |
+| [docs/test-cases.md](docs/test-cases.md)                           | Every promised behaviour as a runnable case, with its automated coverage             |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                                 | Commit conventions and workflow                                                      |
+| [docs/superpowers/specs/](docs/superpowers/specs/)                 | Decision records, one per slice — read for _why_, never for what                     |
+| [docs/superpowers/plans/archive/](docs/superpowers/plans/archive/) | The task-by-task plans that built each slice. Spent scaffolding, kept for provenance |
 
 ## Requirements
 

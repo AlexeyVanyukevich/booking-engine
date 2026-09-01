@@ -9,7 +9,8 @@ twice, the copy is the one to delete.
 
 - System design: [architecture.md](architecture.md)
 - Behaviour, case by case: [test-cases.md](test-cases.md)
-- Specs and plans: [superpowers/specs/](superpowers/specs/), [superpowers/plans/](superpowers/plans/)
+- Why a decision went the way it did: [superpowers/specs/](superpowers/specs/) — decision records, not current truth
+- How a slice was built: [superpowers/plans/archive/](superpowers/plans/archive/) — spent scaffolding, outside the reading path
 
 ---
 

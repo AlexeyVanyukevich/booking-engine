@@ -1,10 +1,9 @@
 # Spec 4 — Multitenancy and the key console
 
-Status: **design**, not implemented.
+**Status:** implemented · **Date:** 2026-08-14
+**Preceding slices:** [spec 1 — resources, schedule, availability](2026-07-27-resources-schedule-availability-design.md), [spec 2 — bookings](2026-08-05-bookings-design.md)
 
-Depends on spec 1 (resources, schedule, availability) and spec 2 (bookings), both implemented.
-Formats, error shapes, the technology stack and the testing rules are not repeated here — they
-live in [conventions.md](../../conventions.md).
+**This is a decision record, not current truth.** It states what was decided on the date above and is not revised as the system changes. For what the engine does today, read [architecture.md](../../architecture.md) and [conventions.md](../../conventions.md) — where they disagree with this document, they are right.
 
 ---
 
