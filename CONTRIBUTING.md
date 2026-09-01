@@ -101,7 +101,7 @@ That type-checks, verifies formatting and runs the full suite. It needs Docker r
 the integration tests start their own Postgres — but no database prepared.
 
 Tests must be green. Tests are written before the implementation for each slice —
-see the plan documents in [docs/superpowers/plans/](docs/superpowers/plans/).
+see the executed plans in [docs/superpowers/plans/archive/](docs/superpowers/plans/archive/).
 
 ## Specs and plans
 
@@ -109,3 +109,15 @@ Every phase gets its own design document in
 [docs/superpowers/specs/](docs/superpowers/specs/) and an implementation plan in
 [docs/superpowers/plans/](docs/superpowers/plans/), named `YYYY-MM-DD-<topic>.md`.
 Write and approve the spec before touching code.
+
+Both are dated artifacts, and neither is revised once the slice ships:
+
+- A **spec** becomes a decision record — read afterwards for _why_ a decision went the way it
+  did, never for what the system does.
+- A **plan** is moved to [plans/archive/](docs/superpowers/plans/archive/) once executed. It is
+  spent scaffolding, kept for provenance.
+
+The last task of every slice updates [docs/architecture.md](docs/architecture.md) and, where a
+rule changed, [docs/conventions.md](docs/conventions.md). Those two are authoritative for
+current behaviour, and they are the whole onboarding path — keeping them true is what stops it
+from growing by one document per slice.
