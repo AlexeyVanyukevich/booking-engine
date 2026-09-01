@@ -1,5 +1,7 @@
 # The `pool` concurrency mode — Implementation Plan
 
+> **Executed and archived.** This plan built the slice named above. It is kept for provenance, sits outside the reading path, and is not current truth — for what the engine does today read [architecture.md](../../../architecture.md) and [conventions.md](../../../conventions.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let a caller book a group of interchangeable resources as one, so that a member can be individually unavailable — room 101 out of service on the 20th while 102 keeps selling — which a scalar `capacity` cannot express.
@@ -8,13 +10,13 @@
 
 **Tech Stack:** Node 24 LTS · TypeScript strict · Fastify 5 · TypeBox · Kysely + `pg` · PostgreSQL 16 · Luxon · Vitest + Testcontainers
 
-**Spec:** [2026-08-27-pool-concurrency-design.md](../specs/2026-08-27-pool-concurrency-design.md)
+**Spec:** [2026-08-27-pool-concurrency-design.md](../../specs/2026-08-27-pool-concurrency-design.md)
 
 **Branch:** `spec-3-pool`, already created and holding the spec commit.
 
 ## Global Constraints
 
-The engine-wide rules live in [conventions.md](../../conventions.md), which is authoritative. They are restated here because a task may be executed by someone who sees only that task. If the two disagree, `conventions.md` is right and this list is stale.
+The engine-wide rules live in [conventions.md](../../../conventions.md), which is authoritative. They are restated here because a task may be executed by someone who sees only that task. If the two disagree, `conventions.md` is right and this list is stale.
 
 - TypeScript `strict: true`, NodeNext modules. Relative imports carry a `.js` extension even in `.ts` files. No `any` outside Kysely migration signatures, where `Kysely<any>` is required by Kysely itself.
 - The TypeBox package is `typebox` (not `@sinclair/typebox`), paired with `@fastify/type-provider-typebox`.

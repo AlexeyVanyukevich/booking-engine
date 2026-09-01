@@ -1,5 +1,7 @@
 # Resources, Schedule & Availability — Implementation Plan
 
+> **Executed and archived.** This plan built the slice named above. It is kept for provenance, sits outside the reading path, and is not current truth — for what the engine does today read [architecture.md](../../../architecture.md) and [conventions.md](../../../conventions.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the foundation of the booking engine and its entire read side — resources, weekly schedules, per-date exceptions, and a timezone-correct availability calculation exposed over HTTP.
@@ -8,11 +10,11 @@
 
 **Tech Stack:** Node 24 LTS · TypeScript strict · Fastify 5 · TypeBox · Kysely + `pg` · PostgreSQL 16 · Luxon · Vitest + Testcontainers
 
-**Spec:** [2026-07-27-resources-schedule-availability-design.md](../specs/2026-07-27-resources-schedule-availability-design.md)
+**Spec:** [2026-07-27-resources-schedule-availability-design.md](../../specs/2026-07-27-resources-schedule-availability-design.md)
 
 ## Global Constraints
 
-The engine-wide rules live in [conventions.md](../../conventions.md), which is authoritative. They are restated in full below on purpose: a task in this plan may be executed by someone who sees only that task, so every constraint has to be readable without following a link. If the two ever disagree, `conventions.md` is right and this list is stale.
+The engine-wide rules live in [conventions.md](../../../conventions.md), which is authoritative. They are restated in full below on purpose: a task in this plan may be executed by someone who sees only that task, so every constraint has to be readable without following a link. If the two ever disagree, `conventions.md` is right and this list is stale.
 
 - Node.js 24, the current active LTS. Declared in `.nvmrc` and in `engines` in `package.json`; the container image pins the minor (`node:24.18-alpine`) rather than floating on `node:24-alpine`, so a rebuild months later produces the same runtime.
 - TypeScript `strict: true`, ES2022 target, NodeNext module resolution. No `any` outside Kysely migration signatures (`Kysely<any>` is required there by Kysely itself).
