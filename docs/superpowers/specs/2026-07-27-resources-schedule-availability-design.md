@@ -1,8 +1,8 @@
 # Spec 1 — Resources, Schedule, Availability
 
-**Status:** awaiting approval
-**Date:** 2026-07-27
-**Source of truth for the overall system:** [docs/architecture.md](../../architecture.md)
+**Status:** implemented · **Date:** 2026-07-27
+
+**This is a decision record, not current truth.** It states what was decided on the date above and is not revised as the system changes. For what the engine does today, read [architecture.md](../../architecture.md) and [conventions.md](../../conventions.md) — where they disagree with this document, they are right.
 
 ---
 

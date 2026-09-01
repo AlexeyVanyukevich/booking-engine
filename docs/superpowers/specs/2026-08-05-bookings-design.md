@@ -1,9 +1,9 @@
 # Spec 2 — Bookings
 
-**Status:** awaiting approval
-**Date:** 2026-08-05
-**Source of truth for the overall system:** [docs/architecture.md](../../architecture.md)
+**Status:** implemented · **Date:** 2026-08-05
 **Preceding slice:** [spec 1 — resources, schedule, availability](2026-07-27-resources-schedule-availability-design.md)
+
+**This is a decision record, not current truth.** It states what was decided on the date above and is not revised as the system changes. For what the engine does today, read [architecture.md](../../architecture.md) and [conventions.md](../../conventions.md) — where they disagree with this document, they are right.
 
 ---
 
