@@ -23,6 +23,7 @@ Reference, consulted rather than read through:
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
 | [openapi.json](openapi.json)                                       | Every path, field and status code, generated from the schemas the routes validate    |
 | [docs/test-cases.md](docs/test-cases.md)                           | Every promised behaviour as a runnable case, with its automated coverage             |
+| [docs/backlog.md](docs/backlog.md)                                 | What is known to be wrong and not yet fixed — read before planning                   |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                                 | Commit scopes and what this repository adds to the shared conventions                |
 | [docs/superpowers/specs/](docs/superpowers/specs/)                 | Decision records, one per slice — read for _why_, never for what                     |
 | [docs/superpowers/plans/archive/](docs/superpowers/plans/archive/) | The task-by-task plans that built each slice. Spent scaffolding, kept for provenance |
