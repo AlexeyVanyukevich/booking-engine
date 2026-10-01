@@ -12,10 +12,10 @@ booked as one, where a caller asks for an interval and the engine claims a free 
 **Start here.** These two are authoritative for what the engine does today, and together they
 are the whole onboarding path:
 
-| Document                                     | What it holds                                                                       |
-| -------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [docs/architecture.md](docs/architecture.md) | The system: data model, lifecycle, availability, and why contracts have their shape |
-| [docs/conventions.md](docs/conventions.md)   | Rules that hold everywhere: formats, error shape, stack, layout, testing            |
+| Document                                     | What it holds                                                                                 |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [docs/architecture.md](docs/architecture.md) | The system: data model, lifecycle, availability, and why contracts have their shape           |
+| [docs/conventions.md](docs/conventions.md)   | The engine's own rules: formats, error and scope tables, stack, where layout and testing land |
 
 Reference, consulted rather than read through:
 
@@ -23,7 +23,7 @@ Reference, consulted rather than read through:
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
 | [openapi.json](openapi.json)                                       | Every path, field and status code, generated from the schemas the routes validate    |
 | [docs/test-cases.md](docs/test-cases.md)                           | Every promised behaviour as a runnable case, with its automated coverage             |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                                 | Commit conventions and workflow                                                      |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                                 | Commit scopes and what this repository adds to the shared conventions                |
 | [docs/superpowers/specs/](docs/superpowers/specs/)                 | Decision records, one per slice — read for _why_, never for what                     |
 | [docs/superpowers/plans/archive/](docs/superpowers/plans/archive/) | The task-by-task plans that built each slice. Spent scaffolding, kept for provenance |
 

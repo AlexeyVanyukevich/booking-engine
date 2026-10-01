@@ -7,6 +7,11 @@ decision was made.
 Other documents link here instead of restating these rules. If you find a rule spelled out
 twice, the copy is the one to delete.
 
+Rules that hold across projects — the error shape, the four-file module layout, tests first,
+datasets over test bodies, commit messages — live in the shared `dev-kit` package and are
+imported by [CLAUDE.md](../CLAUDE.md). This document holds what only the engine knows, and
+where a section below builds on a shared rule it says which.
+
 - System design: [architecture.md](architecture.md)
 - Behaviour, case by case: [test-cases.md](test-cases.md)
 - Why a decision went the way it did: [superpowers/specs/](superpowers/specs/) — decision records, not current truth
@@ -116,6 +121,11 @@ Every error response has the same shape:
 ```json
 { "error": "schedule_overlap", "message": "…", "details": {} }
 ```
+
+The shape, `additionalProperties: false` on every body and the translation of framework 4xx
+into this shape are the shared `http.md` rule. The table below is the engine's full vocabulary,
+including the codes the shared rule also lists, because `documented-tables.test.ts` asserts it
+against the code and consumers read it as the contract.
 
 | Code                           | Status | Meaning                                                                                 |
 | ------------------------------ | ------ | --------------------------------------------------------------------------------------- |
@@ -315,20 +325,11 @@ serialization matters — is in [the spec that made them](superpowers/specs/2026
 
 ## Code layout
 
-Modules are organised by entity, and each splits into four files:
-
-```
-src/modules/<entity>/
-  <entity>.routes.ts       HTTP layer: the route table and its hooks
-  <entity>.schemas.ts      TypeBox schemas, shared between validation and the document
-  <entity>.service.ts      business rules and validation
-  <entity>.repository.ts   SQL
-```
-
-Not every module needs all four: `availability` computes rather than stores and has no
-repository, and `health` is routes alone. A module may add a file for a rule that is worth
-isolating — `slot-generator.ts`, `occupancy.ts`, `booking-validator.ts` are each a pure
-function pulled out of a service for the reasons below.
+Modules follow the shared `layout.md` rule: one directory per entity under `src/modules/`,
+split into routes, schemas, service and repository where each is needed. Here `availability`
+computes rather than stores and has no repository, and `health` is routes alone.
+`slot-generator.ts`, `occupancy.ts` and `booking-validator.ts` are each a pure function pulled
+out of a service for the reasons below.
 
 Cross-cutting helpers live in `src/shared/`, database wiring in `src/db/`. Entrypoints sit at
 `src/`: `server.ts` for the API, `console.ts` for the key console, `worker.ts` for the sweep.
@@ -372,22 +373,14 @@ terminal state.
 
 ## Testing conventions
 
-Tests are written before the implementation, for every slice.
+The shared `testing.md` rule applies: tests first, a real PostgreSQL through Testcontainers,
+data in datasets rather than test bodies, facts about the world derived rather than remembered.
+What follows is where those live in this repository.
 
-**Test data lives in datasets, not in test bodies.** Cases go in `tests/fixtures/datasets/`
-as typed tables and are consumed by a parameterised runner (`it.each`); shared entities go
-behind factories in `tests/fixtures/`. Extending coverage should mean adding a row, not
-copying a test. Where a specific value _is_ the point — a real DST transition date, a
-boundary — it belongs in the dataset as a named case with its expectation, not buried in an
-assertion.
-
-Facts about the outside world are **derived, not remembered**. The DST transition dates in
-`tests/fixtures/data/dst-transitions.json` came from the tz database via Luxon; covering
+Datasets are typed tables in `tests/fixtures/datasets/`, consumed by a parameterised runner
+(`it.each`); shared entities go behind factories in `tests/fixtures/`. The DST transition dates
+in `tests/fixtures/data/dst-transitions.json` came from the tz database via Luxon; covering
 another zone means adding a row there.
-
-Integration tests run against a real PostgreSQL started by Testcontainers, because the
-guarantees that matter — exclusion constraints, row locking, timezone arithmetic — cannot be
-verified against a mock.
 
 **The same datasets drive two runs.** The `Api` client in `tests/fixtures/api.ts` takes a
 transport: `injectTransport` uses Fastify's `app.inject()` for the in-process suite, binding
