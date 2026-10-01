@@ -24,8 +24,10 @@ standing, and the last task of a slice updates it wherever a rule changed.
 ## Conventions
 
 The shared ones come from the `dev-kit` package, one import per rule. A shared rule is corrected
-in the kit, never restated or overridden here; declining one means deleting its line and saying
-why in `CONTRIBUTING.md`.
+in the kit, never restated here. Where the engine's published contract cannot follow one,
+`docs/conventions.md` lists the departure beside the rule with its reason, and a test keeps that
+list exact — today one row, `http.md`'s `conflict`. Declining a whole rule means deleting its
+line and saying why in `CONTRIBUTING.md`.
 
 @node_modules/dev-kit/rules/typescript.md
 @node_modules/dev-kit/rules/http.md

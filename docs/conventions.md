@@ -123,9 +123,18 @@ Every error response has the same shape:
 ```
 
 The shape, `additionalProperties: false` on every body and the translation of framework 4xx
-into this shape are the shared `http.md` rule. The table below is the engine's full vocabulary,
-including the codes the shared rule also lists, because `documented-tables.test.ts` asserts it
-against the code and consumers read it as the contract.
+into this shape are the shared `http.md` rule. The table below is every code the engine can
+emit at a fixed status — `documented-tables.test.ts` asserts it against the code, and consumers
+read it as the contract. `bad_request`, which has no fixed status, is explained in prose further
+down.
+
+The shared rule also lists one code the engine never emits. Where the two disagree, this
+engine answers as follows, and the same test keeps this table equal to the set of shared codes
+the engine does not emit:
+
+| Shared code | Shared status | This engine                  | Why                                                                                                                                                                                         |
+| ----------- | ------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `conflict`  | 409           | `concurrent_update`, **503** | Contention rolled the transaction back before the engine reached a decision; a 409 would claim the slots are contested. A 503 with `Retry-After` leaves resending to the caller — see below |
 
 | Code                           | Status | Meaning                                                                                 |
 | ------------------------------ | ------ | --------------------------------------------------------------------------------------- |
