@@ -20,6 +20,7 @@ import { tableWithHeader, unwrap } from '../fixtures/markdown.js'
 
 const CONVENTIONS = '../../docs/conventions.md'
 const README = '../../README.md'
+const KIT_HTTP_RULE = '../../node_modules/dev-kit/rules/http.md'
 
 function camelCase(variable: string): string {
   const [first, ...rest] = variable.toLowerCase().split('_')
@@ -114,6 +115,25 @@ describe('the error table in conventions.md', () => {
     const prose = readFileSync(new URL(CONVENTIONS, import.meta.url), 'utf8')
     expect(prose).toContain(`\`${errors.FALLBACK_CLIENT_ERROR_CODE}\``)
     expect(documented.has(`${errors.FALLBACK_CLIENT_ERROR_CODE} 400`)).toBe(false)
+  })
+
+  /**
+   * CLAUDE.md imports the shared `http.md` rule, whose own table is loaded beside this one. A
+   * shared code the engine never emits is a standing instruction an agent will follow, so each
+   * must be listed as a departure with what the engine answers instead — and only those, so a
+   * departure the engine later closes cannot linger as a stale row.
+   */
+  it('lists every shared code the engine does not emit as a departure, and nothing else', () => {
+    const shared = tableWithHeader(KIT_HTTP_RULE, 'Code', 'Status', 'Meaning').rows.map((row) =>
+      unwrap(row[0]!),
+    )
+    const emittedCodes = new Set([...emitted()].map((pair) => pair.split(' ')[0]!))
+    emittedCodes.add(errors.FALLBACK_CLIENT_ERROR_CODE)
+
+    const departures = tableWithHeader(CONVENTIONS, 'Shared code', 'Shared status', 'This engine')
+    const listed = departures.rows.map((row) => unwrap(row[0]!))
+
+    expect(listed.sort()).toEqual(shared.filter((code) => !emittedCodes.has(code)).sort())
   })
 })
 
