@@ -4,6 +4,36 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## A used-up rate limit is answered `500`, not `429 rate_limited`
+
+- Where: the per-key rate limit's refusal; `docs/conventions.md`, the error table's
+  `rate_limited` row
+- Found: 2026-10-01, by a consuming project's browser journeys, run in two browsers at once
+- Problem: once a key's limit for the minute is used up, the engine logs
+  `{"error":"rate_limited","message":"Too many requests; slow down and retry"}` at level 50 as
+  "unhandled error" and answers `500 Internal server error`. The conventions table gives that
+  case `429 rate_limited`. Send one key more requests in a minute than its limit allows and
+  read the status of the ones past it. The consumer saw 2 to 9 such answers per test run, all
+  on availability and booking-list reads.
+- Impact: a consumer that retries `429`, as the conventions invite, cannot tell this from a
+  defect and gives up on a request a retry would have served. Its end user sees an error
+  screen; its test suite fails intermittently on runs that happen to cross the limit.
+
+## There is no supported way to run the engine in a consumer's integration tests
+
+- Where: the repository as a whole: no published image; keys are issued only through the
+  console; the rate limit has no setting
+- Found: 2026-10-01, while a consuming project's tests tripped the rate limit
+- Problem: to test against the real engine, a consumer builds the image from a checkout of this
+  repository placed beside its own, starts the engine's database and console as separate
+  containers, issues keys by running a script inside the console container, and seeds resources
+  with a wider key than its app uses. Test traffic then runs under the production per-key limit,
+  which nothing lets it raise.
+- Impact: every consumer rebuilds this harness, it breaks whenever the engine's start-up
+  changes shape, and a suite that grows or runs in a second browser fails for reasons unrelated
+  to the code under test. Wanted: a published image and a documented way to start it for tests,
+  with keys issued without exec and the rate limit configurable.
+
 ## Three `any`s remain in hand-written test code
 
 - Where: `tests/fixtures/transport.ts`, `TransportResponse.json`; `tests/fixtures/suites/types.ts`,
