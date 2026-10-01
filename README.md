@@ -31,8 +31,11 @@ Reference, consulted rather than read through:
 ## Requirements
 
 - Docker — required for the test suite, which runs against a real Postgres via
-  Testcontainers, and sufficient on its own to run the whole engine
-- Node.js 24 and PostgreSQL 16+ — only if you want to run the service outside a container
+  Testcontainers, and sufficient on its own to run the whole engine with
+  `docker compose up -d --build`
+- Node.js 24 — for `./run`, whose helpers come from the `dev-kit` dev dependency and which
+  installs dependencies on first use; and to run the service outside a container
+- PostgreSQL 16+ — only to run the service against a database outside Docker
 
 Node 24 is the current active LTS, supported into 2028; Node 22 has moved to maintenance.
 The version is declared in [.nvmrc](.nvmrc) and enforced by `engines` in `package.json`, and
@@ -109,6 +112,9 @@ same script, so both habits are fine.
 ```bash
 ./run up          # everything in Docker, http://localhost:3000
 ```
+
+On a host with Docker and no Node, `docker compose up -d --build` starts the same stack; what
+`./run up` adds is the port check and the wait until the engine answers.
 
 Every request needs an API key, so make one. Open the console at
 **http://127.0.0.1:3001**, create a tenant, issue a key with the **Back office** preset, and
