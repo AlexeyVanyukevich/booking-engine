@@ -84,7 +84,7 @@ describe('the error table in conventions.md', () => {
 
   /**
    * Every code the engine can put in an `error` field: one per `AppError` subclass, plus the
-   * framework 4xx translations, plus the two the plugins and the handler build directly.
+   * framework 4xx translations, plus the one the handler builds directly.
    * `FALLBACK_CLIENT_ERROR_CODE` is absent on purpose — it has no fixed status, so it is
    * documented in prose instead, which the last case here asserts.
    */
@@ -102,7 +102,6 @@ describe('the error table in conventions.md', () => {
       pairs.add(`${code} ${status}`)
     }
 
-    pairs.add(`${errors.RATE_LIMITED_CODE} 429`)
     pairs.add(`${errors.INTERNAL_ERROR_CODE} 500`)
     return pairs
   }

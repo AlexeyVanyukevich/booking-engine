@@ -127,6 +127,17 @@ export class HoldExpiredError extends AppError {
 }
 
 /**
+ * The per-key limit for this minute is used up. The rate-limit plugin in `src/app.ts` throws
+ * whatever its `errorResponseBuilder` returns, and returns this, so the refusal is sent like any
+ * other engine error. The plugin has already set `retry-after` and `x-ratelimit-*` on the reply,
+ * and Fastify's error path keeps them.
+ */
+export class RateLimitedError extends AppError {
+  readonly statusCode = 429
+  readonly code = 'rate_limited'
+}
+
+/**
  * The transaction was rolled back by Postgres because of contention, not because anything
  * about the request was wrong. `503` with `Retry-After` is the honest answer: the same request
  * sent again is expected to succeed. `409` would be a lie — it would tell the caller the slots
@@ -180,9 +191,6 @@ export const CLIENT_ERROR_CODES: Record<number, string> = {
 export const FALLBACK_CLIENT_ERROR_CODE = 'bad_request'
 
 export const INTERNAL_ERROR_CODE = 'internal_error'
-
-/** Built by the rate-limit plugin in `src/app.ts` rather than thrown, but emitted all the same. */
-export const RATE_LIMITED_CODE = 'rate_limited'
 
 function clientErrorCode(statusCode: number): string {
   return CLIENT_ERROR_CODES[statusCode] ?? FALLBACK_CLIENT_ERROR_CODE

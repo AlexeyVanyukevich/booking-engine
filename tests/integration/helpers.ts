@@ -2,6 +2,7 @@ import { inject } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { sql, type Kysely } from 'kysely'
 import { buildApp } from '../../src/app.js'
+import type { AppConfig } from '../../src/config.js'
 import { createDb } from '../../src/db/client.js'
 import type { Database } from '../../src/db/schema.js'
 import { TenantRepository } from '../../src/modules/tenants/tenant.repository.js'
@@ -39,7 +40,7 @@ export async function seedTenantId(name = 'test tenant'): Promise<string> {
   return row.id
 }
 
-export async function buildTestApp(): Promise<FastifyInstance> {
+export async function buildTestApp(overrides: Partial<AppConfig> = {}): Promise<FastifyInstance> {
   const app = await buildApp({
     config: {
       port: 0,
@@ -51,8 +52,9 @@ export async function buildTestApp(): Promise<FastifyInstance> {
       holdSweepEnabled: false,
       consolePort: 3001,
       // High enough that a suite firing hundreds of requests in one minute is not throttled;
-      // the limiter's own behaviour is asserted in tests/integration/auth.test.ts.
+      // the limiter's own behaviour is asserted in tests/integration/rate-limit.test.ts.
       rateLimitPerMinute: 100_000,
+      ...overrides,
     },
     db: getTestDb(),
   })

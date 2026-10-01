@@ -17,7 +17,7 @@ import { scheduleRoutes } from './modules/schedule/schedule.routes.js'
 import { TenantRepository } from './modules/tenants/tenant.repository.js'
 import { TenantService } from './modules/tenants/tenant.service.js'
 import { registerAuth } from './shared/auth.js'
-import { RATE_LIMITED_CODE, registerErrorHandler } from './shared/errors.js'
+import { RateLimitedError, registerErrorHandler } from './shared/errors.js'
 
 export interface AppDeps {
   config: AppConfig
@@ -87,17 +87,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   registerErrorHandler(app)
 
-  // Per key, so one tenant cannot exhaust the engine for the others. The authentication hook
-  // has not run when the generator is called, so the raw header stands in for the key id — it
-  // identifies the caller just as well and needs no database round trip.
+  // Per key, so one tenant cannot exhaust the engine for the others. The plugin attaches its
+  // hook to each route, and route hooks run after the application-level authentication hook,
+  // so a request whose key is rejected is never counted. What is counted is keyed on the raw
+  // header, or on the address for a public route called without one. The plugin throws what
+  // the builder returns, so it must be an `AppError` to answer 429 rather than 500.
   await app.register(fastifyRateLimit, {
     max: deps.config.rateLimitPerMinute,
     timeWindow: '1 minute',
     keyGenerator: (request) => request.headers.authorization ?? request.ip,
-    errorResponseBuilder: () => ({
-      error: RATE_LIMITED_CODE,
-      message: 'Too many requests; slow down and retry',
-    }),
+    errorResponseBuilder: () => new RateLimitedError('Too many requests; slow down and retry'),
   })
 
   registerAuth(app, new TenantService(new TenantRepository(deps.db)))
