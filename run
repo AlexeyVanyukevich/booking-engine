@@ -9,7 +9,18 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # This script is what installs dependencies, so it cannot source out of node_modules before the
 # kit is there. The test is for the file rather than the directory: a checkout installed before
 # the kit became a dependency has node_modules without it.
-[ -f node_modules/dev-kit/sh/lib.sh ] || npm install
+#
+# Until the kit is installed there is no `die`, so a missing npm is explained by hand here: a
+# host with Docker alone would otherwise see only `npm: command not found`.
+if [ ! -f node_modules/dev-kit/sh/lib.sh ]; then
+  if ! command -v npm >/dev/null 2>&1; then
+    printf '✗ ./run needs Node.js 24 and npm: its helpers come from the dev-kit package.\n' >&2
+    printf '  Install Node 24 (see .nvmrc), or run the stack on Docker alone:  docker compose up -d --build\n' >&2
+    exit 1
+  fi
+  printf '→ Installing dependencies, which ./run itself needs\n'
+  npm install
+fi
 source node_modules/dev-kit/sh/lib.sh
 
 # Recorded before `.env` is loaded, because afterwards there is no telling the two apart, and
