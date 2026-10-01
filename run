@@ -52,27 +52,6 @@ need_local_env() {
   note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
 }
 
-# A busy port is fatal rather than a warning: Docker would otherwise fail several seconds
-# later with "Bind for 0.0.0.0:3000 failed", which says nothing about who is holding it or
-# what to do. Name the holder and offer the way out.
-require_free_port() {
-  local port=$1
-  lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || return 0
-
-  local holder
-  holder=$(docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null | grep ":${port}->" | cut -f1 | head -1)
-
-  # Our own stack holding the port is not a conflict — `up` on a running stack rebuilds it.
-  case "$holder" in
-    "$(basename "$PWD")-app-"*) return 0 ;;
-  esac
-
-  [ -z "$holder" ] && holder=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1" (pid "$2")"}')
-
-  die "Port ${port} is already in use by ${holder:-another process}." \
-    "Stop it, or run this on another port:  PORT=3100 $0 ${SCENARIO:-up}"
-}
-
 # Scenarios that talk to an already-running engine must find it, not assume the default.
 # A stack started as `PORT=3100 ./run up` is invisible to a later `./run docs` in a fresh
 # shell, which would then point at whatever else owns 3000 — on this machine, a different
@@ -168,8 +147,6 @@ wait_for_console() {
 
 local_prepare() {
   need_docker; need_node; need_deps; need_local_env
-  require_free_port "$APP_PORT"
-  require_free_port "$CONSOLE_PORT"
   step "Starting the database"
   docker compose up -d db
   wait_for_db
@@ -313,7 +290,6 @@ cmd_stop() {
 
 cmd_up() {
   need_docker
-  require_free_port "$APP_PORT"
   step "Building and starting the full stack"
   docker compose up -d --build
   wait_for_app

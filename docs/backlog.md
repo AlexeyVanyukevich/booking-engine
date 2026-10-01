@@ -4,17 +4,18 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
-## `./run up` exits silently when a non-Docker process holds the port
+## `./run smoke` and `./run docs` exit silently when another server holds the port
 
-- Where: `run`, `require_free_port()`, the `holder=$(docker ps … | grep ":${port}->" | …)` line
+- Where: `run`, `assert_engine_answers()`, the
+  `holder=$(docker ps … | grep ":${APP_PORT}->" | …)` line
 - Found: 2026-10-01, while verifying the dev-kit adoption; the same on `main`
-- Problem: when the port is in use by a process that is not a container — a `./run dev` engine,
-  say — the `grep` matches nothing and exits 1. Under `set -euo pipefail` that failed pipeline
-  ends the script before it reaches its own message, so `./run up` prints nothing and exits 1.
-  Run `./run dev --bg`, then `./run up`. The `lsof` fallback and the "Port … is already in use"
-  instruction below that line are unreachable in exactly the case they were written for.
-- Impact: the most likely port conflict — the engine already running locally — gives no
-  explanation at all. The same function guards `dev` and `debug`, so they fail the same way.
+- Problem: when something that is not this engine answers HTTP on the port, and it is not a
+  container, the `grep` matches nothing and exits 1. Under `set -euo pipefail` that failed
+  pipeline ends the script before its own message, so the scenario prints nothing and exits 1.
+  Run `python3 -m http.server 3999`, then `PORT=3999 ./run smoke`. The "Port … is answering, but
+  it is not this engine" instruction is unreachable in exactly the case it was written for.
+- Impact: a port held by another project's dev server — the case the comment above
+  `resolve_running_port` describes — gives no explanation at all.
 
 ## The pool booking path re-scans members one query pair at a time
 
