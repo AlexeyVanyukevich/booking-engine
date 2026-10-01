@@ -4,6 +4,24 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## The rate limit is counted per process, not across the deployment
+
+- Where: `src/app.ts`, the `@fastify/rate-limit` registration, which passes no store; until
+  2026-10-01 a row in `docs/conventions.md`'s deliberate limitations
+- Found: 2026-10-01, moved here from the deliberate limitations, where it had been accepted
+- Problem: the plugin keeps each key's count for the current minute in the memory of the
+  process that served the request. Every API instance therefore counts on its own, and a
+  restart forgets every count. Run two `app` containers against one database behind a
+  round-robin balancer, with `RATE_LIMIT_PER_MINUTE=600`, and send one key 1 200 requests in a
+  minute: none is refused. Restart the one container mid-minute and the key's budget starts over.
+- Impact: `RATE_LIMIT_PER_MINUTE` means "per key, per process", so the real ceiling scales with
+  the instance count and nobody reading the setting can tell. Whether a request is refused
+  depends on which instance the balancer picked, so a consumer pacing itself on `429` and
+  `x-ratelimit-remaining` sees inconsistent answers. A single instance, as `./run up` and the
+  compose file run it, behaves exactly as documented. The plugin takes a Redis client through
+  its `redis` option, or any object implementing its `store` interface, so the counts can live
+  in Redis or in the engine's own PostgreSQL.
+
 ## The rate-limit refusal ignores the plugin's `ban` context
 
 - Where: `src/app.ts`, the `errorResponseBuilder` passed to `@fastify/rate-limit`
