@@ -19,7 +19,7 @@ The system was delivered in four slices, all implemented:
 
 The specs in [superpowers/specs/](superpowers/specs/) are **decision records**. Read one to learn _why_ something has the shape it does — never to learn what it does. The executed plans in [superpowers/plans/archive/](superpowers/plans/archive/) are spent scaffolding, kept for provenance and outside the reading path.
 
-Formats, error codes, the technology stack, code layout and testing rules are **not** repeated here. They live in [conventions.md](conventions.md), authoritative on the same terms and applying to every slice.
+Formats, error codes, the technology stack, code layout and testing rules are **not** repeated here. They live in [conventions.md](conventions.md), authoritative on the same terms and applying to every slice. Rules that hold across projects come from the shared `dev-kit` package, imported by [CLAUDE.md](../CLAUDE.md); `tsconfig.json` extends its Node base and Prettier takes its configuration.
 
 ---
 
