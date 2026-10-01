@@ -58,11 +58,11 @@ export interface ActiveBooking {
 
 export interface ListFilter {
   tenantId: string
-  resourceId?: string
-  customerId?: string
+  resourceId?: string | undefined
+  customerId?: string | undefined
   from: Date
   to: Date
-  status?: BookingStatus
+  status?: BookingStatus | undefined
 }
 
 const columns = [

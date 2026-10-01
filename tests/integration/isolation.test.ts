@@ -100,7 +100,7 @@ describe('tenant isolation', () => {
 
     const attempts = [
       { method: 'PATCH' as const, url: `/resources/${id}`, payload: { capacity: 2 } },
-      { method: 'DELETE' as const, url: `/resources/${id}`, payload: undefined },
+      { method: 'DELETE' as const, url: `/resources/${id}` },
       { method: 'PUT' as const, url: `/resources/${id}/schedule`, payload: everyDay },
       {
         method: 'PUT' as const,
@@ -110,7 +110,6 @@ describe('tenant isolation', () => {
       {
         method: 'DELETE' as const,
         url: `/resources/${id}/exceptions/2026-09-01`,
-        payload: undefined,
       },
     ]
 
@@ -153,10 +152,10 @@ describe('tenant isolation', () => {
     const bookingId = booking.json().id as string
 
     const attempts = [
-      { method: 'GET' as const, url: `/bookings/${bookingId}`, payload: undefined },
-      { method: 'POST' as const, url: `/bookings/${bookingId}/cancel`, payload: undefined },
-      { method: 'POST' as const, url: `/bookings/${bookingId}/complete`, payload: undefined },
-      { method: 'POST' as const, url: `/bookings/${bookingId}/no-show`, payload: undefined },
+      { method: 'GET' as const, url: `/bookings/${bookingId}` },
+      { method: 'POST' as const, url: `/bookings/${bookingId}/cancel` },
+      { method: 'POST' as const, url: `/bookings/${bookingId}/complete` },
+      { method: 'POST' as const, url: `/bookings/${bookingId}/no-show` },
       {
         method: 'POST' as const,
         url: `/bookings/${bookingId}/reschedule`,
