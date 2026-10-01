@@ -38,6 +38,10 @@ The version is declared in [.nvmrc](.nvmrc) and enforced by `engines` in `packag
 the container image pins the minor rather than floating on a tag, so a rebuild a year from
 now produces the same runtime.
 
+Building the image needs GitHub as well as the npm registry: `tsconfig.json` extends `dev-kit`,
+a dev dependency installed from its git host at a pinned tag. The build stage fetches it; the
+runtime image installs production dependencies only and does not contain it.
+
 ### Dependency security
 
 `npm audit --omit=dev` reports no vulnerabilities, and that is the number that matters for

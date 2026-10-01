@@ -143,7 +143,7 @@ describe('scopes', () => {
       method: method as 'GET',
       url,
       headers: auth(withoutIt),
-      payload: method === 'GET' || method === 'DELETE' ? undefined : {},
+      ...(method === 'GET' || method === 'DELETE' ? {} : { payload: {} }),
     })
     expect(denied.statusCode).toBe(403)
     expect(denied.json().details).toEqual({ required })
@@ -153,7 +153,7 @@ describe('scopes', () => {
       method: method as 'GET',
       url,
       headers: auth(withIt),
-      payload: method === 'GET' || method === 'DELETE' ? undefined : {},
+      ...(method === 'GET' || method === 'DELETE' ? {} : { payload: {} }),
     })
     // Anything but 401/403 means the key got past authentication and authorisation; what the
     // handler then made of an empty body or an absent id is not this test's business.

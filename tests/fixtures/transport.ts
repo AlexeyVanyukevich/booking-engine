@@ -59,11 +59,7 @@ export function httpTransport(baseUrl: string): Transport {
         ...(sendsBody ? { 'content-type': 'application/json' } : {}),
         ...headers,
       },
-      body: sendsBody
-        ? typeof payload === 'string'
-          ? payload
-          : JSON.stringify(payload)
-        : undefined,
+      body: sendsBody ? (typeof payload === 'string' ? payload : JSON.stringify(payload)) : null,
     })
 
     const body = await response.text()

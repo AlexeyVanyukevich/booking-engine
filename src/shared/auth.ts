@@ -29,7 +29,7 @@ export interface RouteAuthorization {
   method: string
   url: string
   /** Absent on a route declared `public: true`. */
-  scope?: Scope
+  scope?: Scope | undefined
 }
 
 const BEARER = /^Bearer (.+)$/

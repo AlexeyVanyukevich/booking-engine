@@ -3,7 +3,7 @@ import type { FastifyError, FastifyInstance } from 'fastify'
 export abstract class AppError extends Error {
   abstract readonly statusCode: number
   abstract readonly code: string
-  readonly details?: Record<string, unknown>
+  readonly details?: Record<string, unknown> | undefined
   /** Response headers the status code alone cannot express, such as `Retry-After`. */
   readonly headers?: Record<string, string>
 

@@ -41,7 +41,7 @@ export interface InsertResource {
 }
 
 export interface ListFilter {
-  isActive?: boolean
+  isActive?: boolean | undefined
 }
 
 export interface UpdateResource {

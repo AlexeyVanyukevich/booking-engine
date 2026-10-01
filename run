@@ -6,32 +6,16 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# This script is what installs dependencies, so it cannot source out of node_modules before the
+# kit is there. The test is for the file rather than the directory: a checkout installed before
+# the kit became a dependency has node_modules without it.
+[ -f node_modules/dev-kit/sh/lib.sh ] || npm install
+source node_modules/dev-kit/sh/lib.sh
+
 # Recorded before `.env` is loaded, because afterwards there is no telling the two apart, and
 # `resolve_running_port` needs to: an explicit port on the command line is an instruction,
 # while one from the file is only a default that a running container may contradict.
 PORT_FROM_SHELL="${PORT:+yes}"
-
-# `.env` is the local counterpart of what compose already substitutes for the Docker stack.
-# Loading it here rather than in each npm script is what keeps this script's own checks — the
-# port guards, the health waits, the URLs it prints — agreeing with the ports the processes
-# actually bind.
-#
-# Precedence is the conventional one: command line, then the file, then the defaults below.
-# That is why this reads the file line by line instead of sourcing it — `. ./.env` assigns
-# unconditionally and would let the file override an explicit `PORT=3100 ./run dev`.
-#
-# The grammar is plain `KEY=value`, matching what compose itself reads: no quoting, no
-# expansion, `#` starts a comment.
-load_env_file() {
-  [ -f .env ] || return 0
-  local line key
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in '' | \#*) continue ;; esac
-    key=${line%%=*}
-    [ -n "${!key:-}" ] && continue
-    export "$key=${line#*=}"
-  done < .env
-}
 
 # On the very first run `.env` does not exist yet; `need_env` creates it a moment later, and it
 # takes effect from the next invocation. Nothing is lost — a fresh `.env` is a copy of
@@ -45,54 +29,16 @@ DB_HOST_PORT=5433
 RUN_STATE=".run"
 COMPOSE_DB_URL="postgres://postgres:postgres@localhost:${DB_HOST_PORT}/booking_engine"
 
-# ── output ───────────────────────────────────────────────────────────────────
-
-if [ -t 1 ]; then
-  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; OFF=$'\033[0m'
-else
-  BOLD=''; DIM=''; RED=''; GREEN=''; YELLOW=''; OFF=''
-fi
-
-step() { printf '%s→ %s%s\n' "$BOLD" "$1" "$OFF"; }
-ok()   { printf '%s✓ %s%s\n' "$GREEN" "$1" "$OFF"; }
-note() { printf '%s  %s%s\n' "$DIM" "$1" "$OFF"; }
-
-# Fail with an instruction, not just a symptom.
-die() {
-  printf '%s✗ %s%s\n' "$RED" "$1" "$OFF" >&2
-  [ $# -gt 1 ] && printf '%s  %s%s\n' "$YELLOW" "$2" "$OFF" >&2
-  exit 1
-}
+# Read by the kit's `need_node`: the floor is its default of 24, the pointer to `.nvmrc` is ours.
+DEVKIT_NODE_HINT="Install Node 24 or newer — see .nvmrc."
 
 # ── preflight ────────────────────────────────────────────────────────────────
 
-need_docker() {
-  command -v docker >/dev/null 2>&1 ||
-    die "Docker is not installed." "Install Docker Desktop, then run this again."
-  docker info >/dev/null 2>&1 ||
-    die "Docker is installed but not running." "Start Docker Desktop and wait for it to report ready."
-}
-
-need_node() {
-  command -v node >/dev/null 2>&1 || die "Node is not installed." "Install Node 24 — see .nvmrc."
-  local major
-  major="$(node -p 'process.versions.node.split(".")[0]')"
-  if [ "$major" -lt 24 ]; then
-    printf '%s! Node %s is older than the required 24.%s\n' "$YELLOW" "$(node -v)" "$OFF" >&2
-    note "nvm use   (or install Node 24) — continuing anyway"
-  fi
-}
-
-need_deps() {
-  [ -d node_modules ] || { step "Installing dependencies"; npm install; }
-}
-
-need_env() {
-  if [ ! -f .env ]; then
-    step "Creating .env from .env.example"
-    cp .env.example .env
-    note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
-  fi
+# The kit's need_env creates .env and reports that it did; what the new file already points at
+# is this project's to say. It returns non-zero on that first run, so it is never called bare.
+need_local_env() {
+  need_env && return 0
+  note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
 }
 
 # A busy port is fatal rather than a warning: Docker would otherwise fail several seconds
@@ -210,7 +156,7 @@ wait_for_console() {
 # Starting either alone leaves you unable to use either.
 
 local_prepare() {
-  need_docker; need_node; need_deps; need_env
+  need_docker; need_node; need_deps; need_local_env
   require_free_port "$APP_PORT"
   require_free_port "$CONSOLE_PORT"
   step "Starting the database"
