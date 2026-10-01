@@ -4,20 +4,44 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
-## A request whose key is rejected is never rate-limited
+## The rate-limit refusal ignores the plugin's `ban` context
+
+- Where: `src/app.ts`, the `errorResponseBuilder` passed to `@fastify/rate-limit`
+- Found: 2026-10-01, in the review of the rate-limit status fix
+- Problem: the plugin passes the builder a context whose `statusCode` becomes `403` and `ban`
+  becomes `true` once a client passes the `ban` threshold. The builder ignores the context and
+  always returns `RateLimitedError`, a `429`. `ban` is not set today, so the path is never taken.
+- Impact: none today. Whoever sets `ban` gets `429` where the plugin documents `403`, with no
+  test to say so.
+
+## The `x-ratelimit-*` headers on a `429` are not asserted
+
+- Where: `tests/integration/rate-limit.test.ts`; the comment on `RateLimitedError` in
+  `src/shared/errors.ts`
+- Found: 2026-10-01, in the review of the rate-limit status fix
+- Problem: the comment says the plugin's `retry-after` and `x-ratelimit-*` headers survive
+  Fastify's error path. The test asserts `retry-after` on every `429`, but none of
+  `x-ratelimit-limit`, `-remaining` or `-reset`.
+- Impact: a consumer pacing itself from `x-ratelimit-remaining` would lose it without a failing
+  test. Low today, because nothing in the engine touches those headers.
+
+## Requests the limiter never sees: rejected keys and unmatched paths
 
 - Where: `src/app.ts`, the `@fastify/rate-limit` registration; `src/shared/auth.ts`, the
-  `onRequest` hook
+  `onRequest` hook; `src/shared/errors.ts`, `setNotFoundHandler`
 - Found: 2026-10-01, while fixing the rate-limit status
 - Problem: the limiter attaches its `onRequest` hook to each route, and authentication is an
   application-level `onRequest` hook, which Fastify runs first. A request whose key is missing,
   malformed, unknown or revoked is answered `401` before the limiter sees it, so no number of
   them is ever refused. `tests/fixtures/datasets/rate-limit.ts` pins this: three requests with
-  a malformed key under a limit of one all answer `401`.
-- Impact: a well-formed but unknown key costs a database lookup per request, unthrottled, from
-  a caller holding no credential. The secrets are long enough that guessing one stays
-  infeasible, so the cost is load, not access. Counting by address before authentication, or
-  giving failed authentication its own lower limit, would close it.
+  a malformed key under a limit of one all answer `401`. A request to a path no route matches
+  has no route hook at all, so a valid key can draw `404`s without limit; the plugin's README
+  says the not-found handler must opt in for those to count.
+- Impact: a well-formed key costs a database lookup per request, unthrottled, either from a
+  caller holding no credential or from a valid key aimed at unmatched paths. The secrets are
+  long enough that guessing one stays infeasible, so the cost is load, not access. Counting by
+  address before authentication, or giving failed authentication its own lower limit, and
+  registering the not-found handler with the limiter, would close it.
 
 ## `openapi.json` documents no `401`, `403` or `429` on any route
 
