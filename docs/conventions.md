@@ -162,7 +162,7 @@ the engine does not emit:
 | `hold_expired`                 | 410    | `confirm` on a hold whose `held_until` has passed                                       |
 | `payload_too_large`            | 413    | Body beyond Fastify's body limit                                                        |
 | `unsupported_media_type`       | 415    | Body sent with a content type the route cannot parse                                    |
-| `rate_limited`                 | 429    | The per-key limit for this minute is used up                                            |
+| `rate_limited`                 | 429    | The per-key limit for this minute is used up; carries `Retry-After`                     |
 | `internal_error`               | 500    | Anything unexpected                                                                     |
 | `concurrent_update`            | 503    | Contention rolled the transaction back; retry the request                               |
 
