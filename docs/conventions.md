@@ -408,18 +408,22 @@ export interface Suite<TCase> {
   name: string
   cases: readonly TCase[]
   describe: (testCase: TCase) => string
-  /** null when the case passes, or a sentence explaining the mismatch */
-  run: (context: SuiteContext, testCase: TCase) => Promise<string | null>
+  /** null when the case passes, `skip(reason)` when HTTP alone cannot reach it, or a sentence explaining the mismatch */
+  run: (context: SuiteContext, testCase: TCase) => Promise<CaseResult>
 }
 ```
 
+`index.ts` lists each suite as `seal(suite)`, which binds every case to its own `describe` and
+`run`. That is what lets suites over different case types share one list without `any`; the
+runner only ever sees a name and its checks.
+
 Three sizes of change, three amounts of work:
 
-| Change                                       | What to touch                                                                                                     |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| A new case                                   | One row in a dataset. Nothing else — the test suite and the smoke run both pick it up                             |
-| A new kind of check over an existing dataset | A new suite in `tests/fixtures/suites/`, plus one line in its `index.ts`                                          |
-| A whole new area                             | A dataset, a suite, one line in `index.ts`. The runner does not change — bookings in spec 2 is the worked example |
+| Change                                       | What to touch                                                                                                               |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| A new case                                   | One row in a dataset. Nothing else — the test suite and the smoke run both pick it up                                       |
+| A new kind of check over an existing dataset | A new suite in `tests/fixtures/suites/`, plus one `seal(…)` line in its `index.ts`                                          |
+| A whole new area                             | A dataset, a suite, one `seal(…)` line in `index.ts`. The runner does not change — bookings in spec 2 is the worked example |
 
 `SuiteContext` gives a suite the typed `api` client, the raw `send` transport for requests
 the client deliberately cannot express, and `newResource`, which records what it creates so

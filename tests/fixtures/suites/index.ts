@@ -20,7 +20,7 @@ import {
   nonArrayScheduleBodiesSuite,
   rejectedSchedulesSuite,
 } from './schedule.js'
-import type { Suite } from './types.js'
+import { seal, type SealedSuite } from './types.js'
 
 /**
  * The one place that has to change when a new area of behaviour appears: a suite file and a
@@ -28,28 +28,28 @@ import type { Suite } from './types.js'
  *
  * Order matters only for readability of the output.
  */
-export const suites: Array<Suite<any>> = [
-  acceptedResourcesSuite,
-  rejectedResourcesSuite,
-  acceptedPatchesSuite,
-  rejectedPatchesSuite,
-  acceptedSchedulesSuite,
-  rejectedSchedulesSuite,
-  malformedSchedulesSuite,
-  nonArrayScheduleBodiesSuite,
-  acceptedExceptionsSuite,
-  rejectedExceptionsSuite,
-  availabilitySuite,
-  rejectedBookingsSuite,
-  bookingCapacitySuite,
-  bookingTransitionsSuite,
-  poolMembershipSuite,
-  poolMembershipAcceptedSuite,
-  poolBookingSuite,
-  poolDeletionSuite,
-  notFoundSuite,
-  unknownRouteSuite,
+export const suites: readonly SealedSuite[] = [
+  seal(acceptedResourcesSuite),
+  seal(rejectedResourcesSuite),
+  seal(acceptedPatchesSuite),
+  seal(rejectedPatchesSuite),
+  seal(acceptedSchedulesSuite),
+  seal(rejectedSchedulesSuite),
+  seal(malformedSchedulesSuite),
+  seal(nonArrayScheduleBodiesSuite),
+  seal(acceptedExceptionsSuite),
+  seal(rejectedExceptionsSuite),
+  seal(availabilitySuite),
+  seal(rejectedBookingsSuite),
+  seal(bookingCapacitySuite),
+  seal(bookingTransitionsSuite),
+  seal(poolMembershipSuite),
+  seal(poolMembershipAcceptedSuite),
+  seal(poolBookingSuite),
+  seal(poolDeletionSuite),
+  seal(notFoundSuite),
+  seal(unknownRouteSuite),
 ]
 
-export { isSkipped, skip } from './types.js'
-export type { CaseResult, Skipped, Suite, SuiteContext } from './types.js'
+export { isSkipped, seal, skip } from './types.js'
+export type { CaseResult, Check, SealedSuite, Skipped, Suite, SuiteContext } from './types.js'

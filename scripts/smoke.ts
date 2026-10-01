@@ -128,18 +128,18 @@ async function main(): Promise<void> {
   }
 
   for (const suite of selected) {
-    out(`\n${BOLD}${suite.name}${OFF} ${DIM}(${suite.cases.length})${OFF}`)
+    out(`\n${BOLD}${suite.name}${OFF} ${DIM}(${suite.checks.length})${OFF}`)
 
-    if (suite.cases.length === 0) {
+    if (suite.checks.length === 0) {
       out(`  ${YELLOW}! empty suite — the dataset behind it has no cases${OFF}`)
       continue
     }
 
-    for (const testCase of suite.cases) {
-      const name = suite.describe(testCase)
+    for (const check of suite.checks) {
+      const name = check.describe
       let detail: CaseResult
       try {
-        detail = await suite.run(context, testCase)
+        detail = await check.run(context)
       } catch (error) {
         detail = error instanceof Error ? error.message : String(error)
       }
