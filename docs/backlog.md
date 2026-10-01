@@ -4,6 +4,18 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## Three `any`s remain in hand-written test code
+
+- Where: `tests/fixtures/transport.ts`, `TransportResponse.json`; `tests/fixtures/suites/types.ts`,
+  `Response.json`; `tests/integration/migrations.test.ts`, the `as any` on `db.insertInto(table)`
+- Found: 2026-10-01, while removing the `any` from the smoke suite list
+- Problem: the shared `typescript.md` rule allows `any` only in the `Kysely<any>` signature of
+  a migration. The two `json: () => any` let every test read response fields unchecked; the
+  `as any` sidesteps Kysely's table typing in a test that inserts into tables by name.
+- Impact: a misspelt response field in a test or a suite compiles and fails only at run time,
+  or passes against `undefined`. Typing `json` as `unknown` touches every test that reads a
+  body, which is why it was not done in passing.
+
 ## `./run smoke` and `./run docs` exit silently when another server holds the port
 
 - Where: `run`, `assert_engine_answers()`, the

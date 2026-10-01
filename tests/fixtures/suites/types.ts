@@ -37,6 +37,33 @@ export interface Suite<TCase> {
   run: (context: SuiteContext, testCase: TCase) => Promise<CaseResult>
 }
 
+/** One case of a suite with the case already applied: what the runner executes. */
+export interface Check {
+  describe: string
+  run: (context: SuiteContext) => Promise<CaseResult>
+}
+
+/**
+ * A suite with its case type sealed in. Suites over different case types cannot share one list
+ * as `Suite<T>` — `T` is both read (`cases`) and written (`describe`, `run`), so no single `T`
+ * fits them all short of `any`. The list holds what the runner needs instead: the name, and
+ * each case bound to its own `describe` and `run`.
+ */
+export interface SealedSuite {
+  name: string
+  checks: readonly Check[]
+}
+
+export function seal<TCase>(suite: Suite<TCase>): SealedSuite {
+  return {
+    name: suite.name,
+    checks: suite.cases.map((testCase) => ({
+      describe: suite.describe(testCase),
+      run: (context) => suite.run(context, testCase),
+    })),
+  }
+}
+
 export interface SuiteContext {
   api: Api
   /** The raw transport, for cases the typed client deliberately cannot express. */
