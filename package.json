@@ -57,6 +57,7 @@
     "@types/pg": "^8.20.0",
     "dev-kit": "github:AlexeyVanyukevich/dev-kit#v1.2.1",
     "prettier": "^3.9.6",
+    "testcontainers": "^12.0.4",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

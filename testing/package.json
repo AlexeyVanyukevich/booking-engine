@@ -1,0 +1,32 @@
+{
+  "name": "@alexeyvanyukevich/booking-engine-testing",
+  "version": "0.0.0",
+  "description": "Starts a pinned booking engine for a consumer's tests",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlexeyVanyukevich/booking-engine.git",
+    "directory": "testing"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "peerDependencies": {
+    "@testcontainers/postgresql": "^12.0.0",
+    "testcontainers": "^12.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
+}
