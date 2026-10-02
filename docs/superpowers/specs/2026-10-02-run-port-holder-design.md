@@ -1,6 +1,6 @@
 # `./run` explains a port held by something else
 
-**Status:** draft · **Date:** 2026-10-02
+**Status:** implemented · **Date:** 2026-10-02
 
 **This is a decision record, not current truth.** It states what was decided on the date above and is not revised as the system changes. For what the engine does today, read [architecture.md](../../architecture.md) and [conventions.md](../../conventions.md) — where they disagree with this document, they are right.
 
