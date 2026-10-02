@@ -4,6 +4,28 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## `issue-keys` can leave a tenant with only some of its keys
+
+- Where: `src/issue-keys.ts`, `issueKeys()`, the loop after `createTenant`
+- Found: 2026-10-02, in the review of the consumer test harness
+- Problem: every refusal is decided before the first write, but the tenant and its keys are not
+  written in one transaction. If the database fails after the tenant is created, the command
+  exits `1` and leaves a tenant holding the keys issued so far. `TenantService` takes no
+  transaction, which is why it was not done here.
+- Impact: a retry creates a second tenant of the same name; the first is an orphan only an
+  operator would notice. Rare: it needs the database to fail mid-command.
+
+## The helper's test finds leftover containers by a label every run shares
+
+- Where: `tests/integration/helper.test.ts`, `stillRunning()`; `testing/src/index.ts`,
+  `CONTAINER_LABEL`
+- Found: 2026-10-02, in the review of the consumer test harness
+- Problem: every container the helper starts carries `booking-engine-testing=true`, the same
+  value for every run. The test asserts no container with that label is running, so a
+  consumer's suite using the helper on the same machine at the same time would fail it.
+- Impact: a false failure of `./run check` while another project's suite runs. A per-run value
+  exposed on `StartedEngine` would make the check exact.
+
 ## Nothing runs the check on a pull request or a push to `main`
 
 - Where: `.github/workflows/`, which holds only `release.yml`
