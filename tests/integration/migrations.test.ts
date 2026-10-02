@@ -591,33 +591,41 @@ describe('tenancy', () => {
     ).rejects.toThrow()
   })
 
-  // The guarantee the composite foreign keys exist for.
-  it.each(['schedule', 'schedule_exceptions', 'bookings'] as const)(
-    'refuses a %s row whose tenant disagrees with its resource',
-    async (table) => {
-      const db = getTestDb()
-      const other = await seedTenantId('other')
-      const resourceId = await insertResource()
-
-      const rows: Record<string, Record<string, unknown>> = {
-        schedule: { day_of_week: 0, start_time: '09:00', end_time: '17:00' },
-        schedule_exceptions: { date: '2026-09-01', start_time: null, end_time: null },
-        bookings: {
+  // The guarantee the composite foreign keys exist for. One typed insert per table, because
+  // `insertInto` over a union of table names cannot type the columns each one needs.
+  const insertFor = {
+    schedule: (tenant_id: string, resource_id: string) =>
+      getTestDb()
+        .insertInto('schedule')
+        .values({ tenant_id, resource_id, day_of_week: 0, start_time: '09:00', end_time: '17:00' })
+        .execute(),
+    schedule_exceptions: (tenant_id: string, resource_id: string) =>
+      getTestDb()
+        .insertInto('schedule_exceptions')
+        .values({ tenant_id, resource_id, date: '2026-09-01', start_time: null, end_time: null })
+        .execute(),
+    bookings: (tenant_id: string, resource_id: string) =>
+      getTestDb()
+        .insertInto('bookings')
+        .values({
+          tenant_id,
+          resource_id,
           start_time: '2026-09-01T09:00:00Z',
           end_time: '2026-09-01T10:00:00Z',
           status: 'confirmed',
           customer_id: 'c-1',
           held_until: null,
           concurrency_mode: 'exclusive',
-        },
-      }
+        })
+        .execute(),
+  }
 
-      await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (db.insertInto(table) as any)
-          .values({ tenant_id: other, resource_id: resourceId, ...rows[table] })
-          .execute(),
-      ).rejects.toThrow()
+  it.each(['schedule', 'schedule_exceptions', 'bookings'] as const)(
+    'refuses a %s row whose tenant disagrees with its resource',
+    async (table) => {
+      const other = await seedTenantId('other')
+      const resourceId = await insertResource()
+      await expect(insertFor[table](other, resourceId)).rejects.toThrow()
     },
   )
 })
