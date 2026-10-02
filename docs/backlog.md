@@ -126,19 +126,6 @@ commit that fixes it.
   or passes against `undefined`. Typing `json` as `unknown` touches every test that reads a
   body, which is why it was not done in passing.
 
-## `./run smoke` and `./run docs` exit silently when another server holds the port
-
-- Where: `run`, `assert_engine_answers()`, the
-  `holder=$(docker ps … | grep ":${APP_PORT}->" | …)` line
-- Found: 2026-10-01, while verifying the dev-kit adoption; the same on `main`
-- Problem: when something that is not this engine answers HTTP on the port, and it is not a
-  container, the `grep` matches nothing and exits 1. Under `set -euo pipefail` that failed
-  pipeline ends the script before its own message, so the scenario prints nothing and exits 1.
-  Run `python3 -m http.server 3999`, then `PORT=3999 ./run smoke`. The "Port … is answering, but
-  it is not this engine" instruction is unreachable in exactly the case it was written for.
-- Impact: a port held by another project's dev server — the case the comment above
-  `resolve_running_port` describes — gives no explanation at all.
-
 ## The pool booking path re-scans members one query pair at a time
 
 - Where: `src/modules/bookings/booking.service.ts`, `createInPool()`, the step-2 member loop
