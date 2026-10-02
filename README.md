@@ -62,23 +62,24 @@ full suite passes against it.
 
 One command per scenario. `./run` on its own lists them.
 
-| Command                | What it does                                         |
-| ---------------------- | ---------------------------------------------------- |
-| `./run dev`            | Database in Docker, engine locally with reload       |
-| `./run debug`          | Same, plus a Node inspector on 9229                  |
-| `./run stop`           | Stop whatever `--bg` started, keeping the database   |
-| `./run up`             | Build and start the whole stack in Docker, detached  |
-| `./run down`           | Stop the stack, keeping the data                     |
-| `./run reset`          | Wipe the database and start fresh                    |
-| `./run logs [svc]`     | Follow logs, `app` by default                        |
-| `./run docs`           | Open the interactive API reference                   |
-| `./run openapi`        | Rewrite the committed `openapi.json`                 |
-| `./run psql`           | Open a psql shell on the development database        |
-| `./run test`           | Run the full suite once                              |
-| `./run test:watch`     | Re-run the suite on change                           |
-| `./run test:ui`        | The console suite in a real browser                  |
-| `./run check`          | Types, formatting and the full suite                 |
-| `./run smoke [filter]` | Replay the test-case suites against a running engine |
+| Command                          | What it does                                         |
+| -------------------------------- | ---------------------------------------------------- |
+| `./run dev`                      | Database in Docker, engine locally with reload       |
+| `./run debug`                    | Same, plus a Node inspector on 9229                  |
+| `./run stop`                     | Stop whatever `--bg` started, keeping the database   |
+| `./run up`                       | Build and start the whole stack in Docker, detached  |
+| `./run down`                     | Stop the stack, keeping the data                     |
+| `./run reset`                    | Wipe the database and start fresh                    |
+| `./run logs [svc]`               | Follow logs, `app` by default                        |
+| `./run key <tenant> <preset>...` | Issue keys against the stack, each printed once      |
+| `./run docs`                     | Open the interactive API reference                   |
+| `./run openapi`                  | Rewrite the committed `openapi.json`                 |
+| `./run psql`                     | Open a psql shell on the development database        |
+| `./run test`                     | Run the full suite once                              |
+| `./run test:watch`               | Re-run the suite on change                           |
+| `./run test:ui`                  | The console suite in a real browser                  |
+| `./run check`                    | Types, formatting and the full suite                 |
+| `./run smoke [filter]`           | Replay the test-case suites against a running engine |
 
 `./run up` also starts a `worker` service alongside `db`, `migrate` and `app` — the same image,
 sweeping expired holds on its own. See [Background sweep](#background-sweep) below.
@@ -116,17 +117,22 @@ same script, so both habits are fine.
 On a host with Docker and no Node, `docker compose up -d --build` starts the same stack; what
 `./run up` adds is the port check and the wait until the engine answers.
 
-Every request needs an API key, so make one. Open the console at
-**http://127.0.0.1:3001**, create a tenant, issue a key with the **Back office** preset, and
-copy it — it is shown once:
+Every request needs an API key. Issue one against the stack you just started:
+
+```bash
+./run key "my tenant" back_office
+```
+
+It prints `{"tenantId":"…","keys":{"back_office":"bk_live_…"}}`. The key is shown once:
 
 ```bash
 export BOOKING_KEY=bk_live_...
-./run smoke       # prove it works end to end
+curl -H "authorization: Bearer $BOOKING_KEY" http://localhost:3000/resources
 ```
 
-`./run smoke` creates its own throwaway tenant and key through the console, so it needs the
-console running but not `BOOKING_KEY`.
+The console is not reachable under `./run up`: it binds `127.0.0.1` inside its own container,
+so no published port reaches it. It is for `./run dev`, below, and so is `./run smoke`, which
+issues its own key through the console.
 
 or, to work on the code:
 
