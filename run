@@ -90,7 +90,10 @@ assert_engine_answers() {
 
   if curl -s -m 3 -o /dev/null "$base/" 2>/dev/null && nc -z localhost "$APP_PORT" 2>/dev/null; then
     local holder
-    holder=$(docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null | grep ":${APP_PORT}->" | cut -f1 | head -1)
+    # `|| holder=""`, as in resolve_running_port: when no container publishes the port, or
+    # Docker is not running, the pipeline is non-zero, and `set -e` would end the scenario
+    # here, before the message below. No container is an ordinary answer.
+    holder=$(docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null | grep ":${APP_PORT}->" | cut -f1 | head -1) || holder=""
     die "Port ${APP_PORT} is answering, but it is not this engine${holder:+ — it is ${holder}}." \
       "Start the engine with ./run up, or point at the right port:  PORT=<port> $0 ${SCENARIO:-docs}"
   fi
