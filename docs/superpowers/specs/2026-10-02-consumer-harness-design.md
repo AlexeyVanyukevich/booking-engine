@@ -1,6 +1,6 @@
 # Running the engine in a consumer's tests
 
-**Status:** draft · **Date:** 2026-10-02
+**Status:** implemented · **Date:** 2026-10-02
 
 **This is a decision record, not current truth.** It states what was decided on the date above and is not revised as the system changes. For what the engine does today, read [architecture.md](../../architecture.md) and [conventions.md](../../conventions.md) — where they disagree with this document, they are right.
 
@@ -92,6 +92,11 @@ console and its loopback bind are unchanged.
 **For operators.** `./run key <tenant> <preset>...` runs
 `docker compose run --rm app node dist/src/issue-keys.js …` against the compose stack and
 prints the result. The README's first run uses it in place of the unreachable console.
+
+_As built:_ `issueKeys` also takes an `err` writer beside `out`, so a refusal's message is
+testable without a process. `./run key` builds the image as a separate step, with its progress
+sent to stderr, before `docker compose run --rm app …`: run with `--build`, BuildKit printed
+about 135 lines to stdout ahead of the result.
 
 ---
 
@@ -197,6 +202,10 @@ Testcontainers and calls `startEngine({ image })`:
 - after `stop()`, none of the containers it started is still running;
 - a one-shot failure — an unknown preset — rejects with that step's output, and leaves nothing
   running.
+
+_As built:_ the failing step is a blank tenant, not an unknown preset. `keys` is typed
+`PresetName[]`, so an unknown preset could reach `issue-keys` only through a cast, and both
+refusals take the same path.
 
 **`PresetName`** — a unit test asserts the helper's union equals `Object.keys(PRESETS)`.
 

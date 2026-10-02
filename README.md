@@ -168,12 +168,48 @@ The presets answer the question "what is this key for":
 Presets are expanded at issue time and the name is not stored, so editing a preset later
 cannot change a key already in the field.
 
+## Testing against the engine
+
+A consumer's tests can run against a real engine, pinned to a release, with one call. Each
+`vX.Y.Z` tag publishes the image `ghcr.io/alexeyvanyukevich/booking-engine:X.Y.Z` and the
+helper `@alexeyvanyukevich/booking-engine-testing@X.Y.Z`; the helper starts exactly the image of
+its own version.
+
+GitHub Packages needs a token even to install. In the consumer's `.npmrc`:
+
+```
+@alexeyvanyukevich:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+with `GITHUB_TOKEN` a token holding `read:packages`, locally and in CI. The same token pulls the
+image if it is private: `docker login ghcr.io`.
+
+```ts
+import { startEngine } from '@alexeyvanyukevich/booking-engine-testing'
+
+const engine = await startEngine({
+  keys: ['site_backend', 'back_office'],
+  // The engine's default is 600 a minute per key. A suite that fires more than that from one
+  // key is throttled exactly as production would throttle it, so set what the suite needs.
+  rateLimitPerMinute: 10_000,
+})
+// engine.url, engine.tenantId, engine.keys.site_backend, engine.keys.back_office
+await engine.stop()
+```
+
+It starts the engine's Postgres, runs its migrations, issues one key per preset on one tenant,
+and starts the API, all on a private Docker network. `testcontainers` and
+`@testcontainers/postgresql` are peer dependencies. Every container it starts carries the label
+`booking-engine-testing`.
+
 ## Running both planes locally
 
 `./run dev` starts the engine **and** the console together, each reloading on save, with their
 output labelled `[api]` and `[console]` in one terminal. Ctrl-C stops the pair. They come as a
-pair because the engine refuses every request without a key and the console is the only place
-to issue one — starting either alone leaves you unable to use either.
+pair because the engine refuses every request without a key and the console is where you issue
+one locally — starting either alone leaves you unable to use either. (`./run key` is the other
+way, for the Docker stack, where the console cannot be reached.)
 
 ```bash
 ./run dev            # both, in this terminal

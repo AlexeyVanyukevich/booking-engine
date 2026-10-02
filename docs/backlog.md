@@ -4,6 +4,25 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## Nothing runs the check on a pull request or a push to `main`
+
+- Where: `.github/workflows/`, which holds only `release.yml`
+- Found: 2026-10-02, while adding the release workflow
+- Problem: CI runs `./run check` only when a version tag is pushed. A commit that breaks `main`
+  is caught by whoever next runs the check locally, or by the next release.
+- Impact: a release can be blocked by a failure introduced many commits earlier, and the rule
+  that `main` always passes is enforced by habit alone.
+
+## `./run smoke` cannot run against `./run up`
+
+- Where: `scripts/smoke.ts`, `bootstrapKey()`; `docker-compose.yml`, the `console` service
+- Found: 2026-10-02, while fixing the README's first run
+- Problem: smoke issues its key through the console's forms at `CONSOLE_URL`. Under `./run up`
+  the console binds `127.0.0.1` inside its container, so the published port reaches nothing and
+  smoke fails before its first case. Run `./run up`, then `./run smoke`.
+- Impact: the end-to-end check runs only against `./run dev`. Issuing its key with
+  `issue-keys`, or through `./run key`, would let it run against both.
+
 ## The rate limit is counted per process, not across the deployment
 
 - Where: `src/app.ts`, the `@fastify/rate-limit` registration, which passes no store; until
@@ -72,21 +91,6 @@ commit that fixes it.
   `openapi.json` for `"401"` or `"429"`; there are none.
 - Impact: a consumer generating a client from the document has no type for those answers and no
   hint that `429` exists to be retried. The conventions table is the only place they appear.
-
-## There is no supported way to run the engine in a consumer's integration tests
-
-- Where: the repository as a whole: no published image; keys are issued only through the
-  console; the rate limit has no setting
-- Found: 2026-10-01, while a consuming project's tests tripped the rate limit
-- Problem: to test against the real engine, a consumer builds the image from a checkout of this
-  repository placed beside its own, starts the engine's database and console as separate
-  containers, issues keys by running a script inside the console container, and seeds resources
-  with a wider key than its app uses. Test traffic then runs under the production per-key limit,
-  which nothing lets it raise.
-- Impact: every consumer rebuilds this harness, it breaks whenever the engine's start-up
-  changes shape, and a suite that grows or runs in a second browser fails for reasons unrelated
-  to the code under test. Wanted: a published image and a documented way to start it for tests,
-  with keys issued without exec and the rate limit configurable.
 
 ## Three `any`s remain in hand-written test code
 
