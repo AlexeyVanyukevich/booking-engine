@@ -353,6 +353,23 @@ cmd_psql() {
   docker compose exec db psql -U postgres -d booking_engine
 }
 
+# Issues keys against the compose stack, for an operator who cannot reach the console: under
+# `./run up` it binds 127.0.0.1 inside its own container, so no published port reaches it.
+cmd_key() {
+  need_docker
+  [ $# -ge 2 ] ||
+    die "Usage: ./run key <tenant> <preset>..." \
+      "Presets: widget, site_backend, partner_channel, reporting, back_office"
+  local tenant="$1"
+  shift
+  local args=(--tenant "$tenant")
+  local preset
+  for preset in "$@"; do args+=(--preset "$preset"); done
+  # Build progress goes to stderr, so stdout carries the result line and nothing else.
+  docker compose build app >&2
+  docker compose run --rm app node dist/src/issue-keys.js "${args[@]}"
+}
+
 # Interactive API reference, generated from the same schemas the routes validate against.
 cmd_docs() {
   resolve_running_port
@@ -401,6 +418,8 @@ ${BOLD}Run${OFF}
   down         Stop the stack, keeping the data
   reset        Wipe the database and start fresh
   logs [svc]   Follow logs, app by default
+  key <tenant> <preset>...
+               Issue API keys against the stack; each is printed once
   docs         Open the interactive API reference in a browser
   openapi      Rewrite the committed openapi.json from the route schemas
 
@@ -432,6 +451,7 @@ case "$SCENARIO" in
   check)       cmd_check ;;
   logs)        cmd_logs "${2:-app}" ;;
   psql)        cmd_psql ;;
+  key)         shift; cmd_key "$@" ;;
   docs)        cmd_docs ;;
   openapi)     cmd_openapi ;;
   smoke)       cmd_smoke "${2:-}" ;;
