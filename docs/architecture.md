@@ -37,11 +37,18 @@ runs as a **separate entrypoint bound to `127.0.0.1`** and has no authentication
 that is safe only because the port is unreachable from elsewhere, which is why the bind address
 is hard-coded rather than configurable.
 
+Where the console cannot be reached — a consumer's test harness, or the compose stack, where
+the console's loopback bind leaves no published port that reaches it — `issue-keys` does the
+same job as a one-shot command: it creates a tenant, issues one key per preset, prints them as
+one JSON line and exits. It needs `DATABASE_URL`, the trust the migrator already has, and opens
+no port. A version tag publishes the image and a test helper, `testing/`, that starts that
+image's Postgres, migrations, `issue-keys` and API for a consumer's suite.
+
 ## Data Model
 
 ### Tenant
 
-The owner of every other row. Created only from the console; the engine never creates one.
+The owner of every other row. Created only from the console or `issue-keys`; the API never creates one.
 
 | Column     | Type                  | Description                                                                 |
 | ---------- | --------------------- | --------------------------------------------------------------------------- |
