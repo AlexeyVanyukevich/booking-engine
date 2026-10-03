@@ -1,6 +1,6 @@
 # No `any` in hand-written test code
 
-**Status:** draft · **Date:** 2026-10-02
+**Status:** implemented · **Date:** 2026-10-02
 
 **This is a decision record, not current truth.** It states what was decided on the date above and is not revised as the system changes. For what the engine does today, read [architecture.md](../../architecture.md) and [conventions.md](../../conventions.md) — where they disagree with this document, they are right.
 
@@ -90,6 +90,13 @@ field is absent, reads `json<Record<string, unknown>>()`, which says so.
 The type argument is an assertion, not a check: nothing verifies at run time that the body has
 that shape. What it buys is that every field a test reads is a field of the type the server
 serialises with, so a misspelt or removed field fails to compile.
+
+_As built:_ the reads were typed by the rule above where a status was asserted. A read with
+no status asserted — fixture setup such as `(await api.createResource(x)).json()` — takes the
+method's success type, because the test already relies on the call succeeding. Reads `any`
+used to exempt from `noUncheckedIndexedAccess` use optional chaining (`slots[0]?.available`), so
+a missing element fails its assertion. Of the response types, `src/` exports a type beside only
+some schemas, so `tests/fixtures/bodies.ts` derives the rest with `Static`.
 
 ### 3.4 Not changed
 
