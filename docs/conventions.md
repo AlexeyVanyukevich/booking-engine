@@ -327,6 +327,10 @@ _Chosen in spec 1._
 | Tests      | Vitest + Testcontainers                                                           |
 | Formatting | Prettier                                                                          |
 
+The shared TypeScript rule allows `any` only in a migration's `Kysely<any>`;
+`tests/unit/no-any.test.ts` fails on any other, and a test reads a response body as a named type
+from `tests/fixtures/bodies.ts`.
+
 Rationale for the load-bearing choices — why a query builder rather than an ORM, why response
 serialization matters — is in [the spec that made them](superpowers/specs/2026-07-27-resources-schedule-availability-design.md).
 
