@@ -4,6 +4,18 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## Casts written for untyped bodies outlived them
+
+- Where: `tests/integration/availability.test.ts` (`slots as Slot[]`, three times),
+  `tests/integration/pools.test.ts`, `tests/fixtures/suites/availability.ts`, and about five
+  more: a `json<T>()` read followed by `as …`, or a `.map((row: { … }) => …)` annotation
+- Found: 2026-10-02, while typing response bodies
+- Problem: these casts and annotations were written when `json()` returned `any`, to give the
+  value a shape. Each read now has its contract type, so they are redundant, and a cast keeps
+  compiling if the contract changes under it. Search `tests/` for `json<` followed by `as`.
+- Impact: low today, since the casts agree with the contract. They are where a future contract
+  change would slip past the type check that the typed reads were added for.
+
 ## `issue-keys` can leave a tenant with only some of its keys
 
 - Where: `src/issue-keys.ts`, `issueKeys()`, the loop after `createTenant`
