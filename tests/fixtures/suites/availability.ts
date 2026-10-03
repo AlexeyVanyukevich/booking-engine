@@ -3,6 +3,7 @@ import {
   type AvailabilityScenario,
 } from '../datasets/availability-scenarios.js'
 import type { Suite } from './types.js'
+import type { AvailabilityResponse } from '../bodies.js'
 
 export const availabilitySuite: Suite<AvailabilityScenario> = {
   name: 'Availability',
@@ -19,9 +20,9 @@ export const availabilitySuite: Suite<AvailabilityScenario> = {
       return `expected 200, got ${response.statusCode}: ${response.body.slice(0, 200)}`
     }
 
-    const actual = (response.json().slots as Array<{ start: string; end: string }>).map(
-      (slot) => [slot.start, slot.end] as [string, string],
-    )
+    const actual = (
+      response.json<AvailabilityResponse>().slots as Array<{ start: string; end: string }>
+    ).map((slot) => [slot.start, slot.end] as [string, string])
     const wanted = scenario.expected
 
     if (actual.length !== wanted.length) {

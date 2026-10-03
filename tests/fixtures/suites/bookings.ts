@@ -8,6 +8,7 @@ import { aResource, aSharedResource } from '../resources.js'
 import { WEEKDAYS, aWindow } from '../schedules.js'
 import type { Skipped, Suite, SuiteContext } from './types.js'
 import { expectStatus, skip } from './types.js'
+import type { BookingResponse, ErrorResponse } from '../bodies.js'
 
 const at = (hour: string) => `2026-07-20T${hour}:00+02:00`
 
@@ -34,7 +35,7 @@ export const rejectedBookingsSuite: Suite<RejectedBooking> = {
     const status = expectStatus(response, rejected.status)
     if (status) return status
 
-    const actual = response.json()?.error
+    const actual = response.json<ErrorResponse>()?.error
     return actual === rejected.error ? null : `expected error "${rejected.error}", got "${actual}"`
   },
 }
@@ -52,11 +53,11 @@ export const bookingTransitionsSuite: Suite<TransitionCase> = {
     const status = expectStatus(response, transition.status)
     if (status) return status
 
-    if (transition.becomes && response.json()?.status !== transition.becomes) {
-      return `expected status "${transition.becomes}", got "${response.json()?.status}"`
+    if (transition.becomes && response.json<BookingResponse>()?.status !== transition.becomes) {
+      return `expected status "${transition.becomes}", got "${response.json<BookingResponse>()?.status}"`
     }
-    if (transition.error && response.json()?.error !== transition.error) {
-      return `expected error "${transition.error}", got "${response.json()?.error}"`
+    if (transition.error && response.json<ErrorResponse>()?.error !== transition.error) {
+      return `expected error "${transition.error}", got "${response.json<ErrorResponse>()?.error}"`
     }
     return null
   },

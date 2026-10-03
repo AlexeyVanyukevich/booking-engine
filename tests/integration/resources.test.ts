@@ -11,6 +11,7 @@ import {
 } from '../fixtures/datasets/resource-validation.js'
 import { WEEKDAYS, aWindow } from '../fixtures/schedules.js'
 import { buildTestApp, closeTestDb, resetDbWithTenant, testAuthorization } from './helpers.js'
+import type { ErrorResponse, ResourceListResponse, ResourceResponse } from '../fixtures/bodies.js'
 
 let api: Api
 let close: () => Promise<void>
@@ -34,13 +35,13 @@ describe('POST /resources', () => {
   it.each(acceptedResources)('creates $name', async ({ overrides, expected }) => {
     const response = await api.createResource(aResource(overrides))
     expect(response.statusCode).toBe(201)
-    expect(response.json()).toMatchObject(expected)
+    expect(response.json<ResourceResponse>()).toMatchObject(expected)
   })
 
   it.each(rejectedResources)('rejects $name', async ({ overrides, expectedError }) => {
     const response = await api.createResource({ ...aResource(), ...overrides })
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe(expectedError)
+    expect(response.json<ErrorResponse>().error).toBe(expectedError)
   })
 
   it('assigns a distinct id to each resource', async () => {
@@ -57,18 +58,18 @@ describe('POST /resources', () => {
       delete payload[field]
       const response = await api.createResource(payload)
       expect(response.statusCode).toBe(400)
-      expect(response.json().error).toBe('validation_error')
+      expect(response.json<ErrorResponse>().error).toBe('validation_error')
     },
   )
 
   it('reports pool_id as null on a resource that has no pool', async () => {
     const response = await api.createResource(aResource())
-    expect(response.json()).toHaveProperty('pool_id', null)
+    expect(response.json<ResourceResponse>()).toHaveProperty('pool_id', null)
   })
 
   it('never leaks internal columns', async () => {
     const response = await api.createResource(aResource())
-    expect(Object.keys(response.json()).sort()).toEqual([
+    expect(Object.keys(response.json<ResourceResponse>()).sort()).toEqual([
       'capacity',
       'concurrency_mode',
       'id',
@@ -83,22 +84,22 @@ describe('POST /resources', () => {
 
 describe('GET /resources/:id', () => {
   it('returns a resource unchanged after creation', async () => {
-    const created = (await api.createResource(aDayBasedResource())).json()
+    const created = (await api.createResource(aDayBasedResource())).json<ResourceResponse>()
     const fetched = await api.getResource(created.id)
     expect(fetched.statusCode).toBe(200)
-    expect(fetched.json()).toEqual(created)
+    expect(fetched.json<ResourceResponse>()).toEqual(created)
   })
 
   it('returns 404 for an unknown id', async () => {
     const response = await api.getResource(unknownUuid())
     expect(response.statusCode).toBe(404)
-    expect(response.json().error).toBe('not_found')
+    expect(response.json<ErrorResponse>().error).toBe('not_found')
   })
 
   it.each(MALFORMED_UUIDS)('returns 400 for the malformed id %s', async (id) => {
     const response = await api.getResource(id)
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('validation_error')
+    expect(response.json<ErrorResponse>().error).toBe('validation_error')
   })
 })
 
@@ -107,30 +108,30 @@ describe('PATCH /resources/:id', () => {
     const id = await api.givenResource(aResource(create))
     const response = await api.patchResource(id, patch)
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject(expected)
+    expect(response.json<ResourceResponse>()).toMatchObject(expected)
   })
 
   it.each(rejectedPatches)('rejects $name', async ({ create, patch, expectedError }) => {
     const id = await api.givenResource(aResource(create))
     const response = await api.patchResource(id, patch)
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe(expectedError)
+    expect(response.json<ErrorResponse>().error).toBe(expectedError)
   })
 
   it.each(rejectedPatches)(
     'leaves the resource untouched after rejecting $name',
     async ({ create, patch }) => {
       const id = await api.givenResource(aResource(create))
-      const before = (await api.getResource(id)).json()
+      const before = (await api.getResource(id)).json<ResourceResponse>()
       await api.patchResource(id, patch)
-      expect((await api.getResource(id)).json()).toEqual(before)
+      expect((await api.getResource(id)).json<ResourceResponse>()).toEqual(before)
     },
   )
 
   it('persists the change', async () => {
     const id = await api.givenResource(aResource())
     await api.patchResource(id, { slot_duration: 'PT15M' })
-    expect((await api.getResource(id)).json().slot_duration).toBe('PT15M')
+    expect((await api.getResource(id)).json<ResourceResponse>().slot_duration).toBe('PT15M')
   })
 
   it('returns 404 for an unknown id', async () => {
@@ -187,7 +188,7 @@ describe('DELETE /resources/:id with bookings', () => {
 
     const response = await api.deleteResource(id)
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('resource_has_bookings')
+    expect(response.json<ErrorResponse>().error).toBe('resource_has_bookings')
     expect((await api.getResource(id)).statusCode).toBe(200)
   })
 
@@ -216,7 +217,7 @@ describe('GET /resources', () => {
   it('answers an empty array when the tenant owns nothing', async () => {
     const response = await api.listResources()
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toEqual([])
+    expect(response.json<ResourceListResponse>()).toEqual([])
   })
 
   it('lists the tenant resources oldest first', async () => {
@@ -224,13 +225,16 @@ describe('GET /resources', () => {
     const second = await api.givenResource(aResource())
 
     const response = await api.listResources()
-    expect(response.json().map((row: { id: string }) => row.id)).toEqual([first, second])
+    expect(response.json<ResourceListResponse>().map((row: { id: string }) => row.id)).toEqual([
+      first,
+      second,
+    ])
   })
 
   it('returns the same shape as reading one', async () => {
     const id = await api.givenResource(aResource())
-    const [listed] = (await api.listResources()).json()
-    expect(listed).toEqual((await api.getResource(id)).json())
+    const [listed] = (await api.listResources()).json<ResourceListResponse>()
+    expect(listed).toEqual((await api.getResource(id)).json<ResourceResponse>())
   })
 
   it.each([
@@ -241,7 +245,9 @@ describe('GET /resources', () => {
     await api.patchResource(retired, { is_active: false })
     const live = await api.givenResource(aResource())
 
-    const ids = (await api.listResources(query)).json().map((row: { id: string }) => row.id)
+    const ids = (await api.listResources(query))
+      .json<ResourceListResponse>()
+      .map((row: { id: string }) => row.id)
     expect(ids).toEqual([expectRetired ? live : retired])
   })
 

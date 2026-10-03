@@ -12,6 +12,7 @@ import {
   rejectedSchedules,
 } from '../fixtures/datasets/schedule-validation.js'
 import { buildTestApp, closeTestDb, resetDbWithTenant, testAuthorization } from './helpers.js'
+import type { ErrorResponse, ScheduleResponse } from '../fixtures/bodies.js'
 
 let app: FastifyInstance
 let api: Api
@@ -40,14 +41,14 @@ describe('PUT /resources/:id/schedule', () => {
     const id = await api.givenResource(resourceFor(kind))
     const response = await api.putSchedule(id, rules)
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toHaveLength(rules.length)
+    expect(response.json<ScheduleResponse>()).toHaveLength(rules.length)
   })
 
   it.each(acceptedSchedules)('persists $name', async ({ kind, rules }) => {
     const id = await api.givenResource(resourceFor(kind))
     await api.putSchedule(id, rules)
     const listed = await api.getSchedule(id)
-    expect(listed.json()).toHaveLength(rules.length)
+    expect(listed.json<ScheduleResponse>()).toHaveLength(rules.length)
   })
 
   it.each(rejectedSchedules)(
@@ -56,7 +57,7 @@ describe('PUT /resources/:id/schedule', () => {
       const id = await api.givenResource(resourceFor(kind))
       const response = await api.putSchedule(id, rules)
       expect(response.statusCode).toBe(400)
-      expect(response.json().error).toBe(expectedError)
+      expect(response.json<ErrorResponse>().error).toBe(expectedError)
     },
   )
 
@@ -71,8 +72,8 @@ describe('PUT /resources/:id/schedule', () => {
       await api.putSchedule(id, rules)
 
       const listed = await api.getSchedule(id)
-      expect(listed.json()).toHaveLength(1)
-      expect(listed.json()[0]).toMatchObject({ day_of_week: WEEKDAYS.monday })
+      expect(listed.json<ScheduleResponse>()).toHaveLength(1)
+      expect(listed.json<ScheduleResponse>()[0]).toMatchObject({ day_of_week: WEEKDAYS.monday })
     },
   )
 
@@ -80,14 +81,14 @@ describe('PUT /resources/:id/schedule', () => {
     const id = await api.givenResource(aResource())
     const response = await api.putSchedule(id, rules)
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('validation_error')
+    expect(response.json<ErrorResponse>().error).toBe('validation_error')
   })
 
   it.each(nonArrayScheduleBodies)('rejects a JSON body that is $name', async ({ body }) => {
     const id = await api.givenResource(aResource())
     const response = await api.putScheduleJson(id, body)
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('validation_error')
+    expect(response.json<ErrorResponse>().error).toBe('validation_error')
   })
 
   it('answers a body sent with the wrong content type as a client error, not a server one', async () => {
@@ -115,23 +116,23 @@ describe('PUT /resources/:id/schedule', () => {
     await api.givenSchedule(id, [aWindow(WEEKDAYS.thursday, '10:00', '14:00')])
 
     const listed = await api.getSchedule(id)
-    expect(listed.json()).toHaveLength(1)
-    expect(listed.json()[0]).toMatchObject({ day_of_week: WEEKDAYS.thursday })
+    expect(listed.json<ScheduleResponse>()).toHaveLength(1)
+    expect(listed.json<ScheduleResponse>()[0]).toMatchObject({ day_of_week: WEEKDAYS.thursday })
   })
 
   it('clears the schedule when given an empty array', async () => {
     const id = await api.givenResource(aResource())
     await api.givenSchedule(id, windowsOn([0, 1, 2], '09:00', '17:00'))
     await api.givenSchedule(id, [])
-    expect((await api.getSchedule(id)).json()).toEqual([])
+    expect((await api.getSchedule(id)).json<ScheduleResponse>()).toEqual([])
   })
 
   it('assigns a fresh id to every rule on replacement', async () => {
     const id = await api.givenResource(aResource())
     await api.givenSchedule(id, [aWindow(WEEKDAYS.monday, '09:00', '17:00')])
-    const first = (await api.getSchedule(id)).json()[0].id
+    const first = (await api.getSchedule(id)).json<ScheduleResponse>()[0]?.id
     await api.givenSchedule(id, [aWindow(WEEKDAYS.monday, '09:00', '17:00')])
-    const second = (await api.getSchedule(id)).json()[0].id
+    const second = (await api.getSchedule(id)).json<ScheduleResponse>()[0]?.id
     expect(second).not.toBe(first)
   })
 
@@ -140,7 +141,7 @@ describe('PUT /resources/:id/schedule', () => {
     const second = await api.givenResource(aResource())
     await api.givenSchedule(first, [aWindow(WEEKDAYS.monday, '09:00', '17:00')])
 
-    expect((await api.getSchedule(second)).json()).toEqual([])
+    expect((await api.getSchedule(second)).json<ScheduleResponse>()).toEqual([])
   })
 
   it('returns 404 for an unknown resource', async () => {
@@ -153,7 +154,7 @@ describe('GET /resources/:id/schedule', () => {
     const id = await api.givenResource(aResource())
     const response = await api.getSchedule(id)
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toEqual([])
+    expect(response.json<ScheduleResponse>()).toEqual([])
   })
 
   it('returns rules ordered by weekday and then start time', async () => {
@@ -166,11 +167,8 @@ describe('GET /resources/:id/schedule', () => {
 
     expect(
       (await api.getSchedule(id))
-        .json()
-        .map((rule: { day_of_week: number; start_time: string }) => [
-          rule.day_of_week,
-          rule.start_time,
-        ]),
+        .json<ScheduleResponse>()
+        .map((rule) => [rule.day_of_week, rule.start_time]),
     ).toEqual([
       [WEEKDAYS.monday, '09:00'],
       [WEEKDAYS.monday, '14:00'],
@@ -181,7 +179,7 @@ describe('GET /resources/:id/schedule', () => {
   it('reports times as HH:MM rather than the stored HH:MM:SS', async () => {
     const id = await api.givenResource(aResource())
     await api.givenSchedule(id, [aWindow(WEEKDAYS.monday, '09:00', '17:00')])
-    expect((await api.getSchedule(id)).json()[0]).toMatchObject({
+    expect((await api.getSchedule(id)).json<ScheduleResponse>()[0]).toMatchObject({
       start_time: '09:00',
       end_time: '17:00',
     })
@@ -190,7 +188,7 @@ describe('GET /resources/:id/schedule', () => {
   it('reports null times for a day-based resource', async () => {
     const id = await api.givenResource(aDayBasedResource())
     await api.givenSchedule(id, everyDay())
-    const rules = (await api.getSchedule(id)).json()
+    const rules = (await api.getSchedule(id)).json<ScheduleResponse>()
     expect(rules).toHaveLength(7)
     for (const rule of rules) {
       expect(rule.start_time).toBeNull()

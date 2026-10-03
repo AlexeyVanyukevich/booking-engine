@@ -16,6 +16,7 @@ import {
   resetDbWithTenant,
   testAuthorization,
 } from './helpers.js'
+import type { AvailabilityResponse, ErrorResponse } from '../fixtures/bodies.js'
 
 let api: Api
 let close: () => Promise<void>
@@ -53,14 +54,14 @@ describe('GET /resources/:id/availability', () => {
   it.each(availabilityScenarios)('$name', async (scenario) => {
     const response = await runScenario(scenario)
     expect(response.statusCode).toBe(200)
-    expect(response.json().slots.map((slot: Slot) => [slot.start, slot.end])).toEqual(
-      scenario.expected,
-    )
+    expect(
+      response.json<AvailabilityResponse>().slots.map((slot: Slot) => [slot.start, slot.end]),
+    ).toEqual(scenario.expected)
   })
 
   it.each(availabilityScenarios)('marks every slot available in $name', async (scenario) => {
     const response = await runScenario(scenario)
-    for (const slot of response.json().slots as Slot[]) {
+    for (const slot of response.json<AvailabilityResponse>().slots as Slot[]) {
       // These scenarios create no bookings, so nothing has been subtracted.
       expect(slot.available).toBe(true)
     }
@@ -68,7 +69,9 @@ describe('GET /resources/:id/availability', () => {
 
   it.each(availabilityScenarios)('returns slots in ascending order in $name', async (scenario) => {
     const response = await runScenario(scenario)
-    const starts = (response.json().slots as Slot[]).map((slot) => Date.parse(slot.start))
+    const starts = (response.json<AvailabilityResponse>().slots as Slot[]).map((slot) =>
+      Date.parse(slot.start),
+    )
     expect(starts).toEqual([...starts].sort((a, b) => a - b))
   })
 
@@ -76,7 +79,7 @@ describe('GET /resources/:id/availability', () => {
     'never ends a slot before it starts in $name',
     async (scenario) => {
       const response = await runScenario(scenario)
-      for (const slot of response.json().slots as Slot[]) {
+      for (const slot of response.json<AvailabilityResponse>().slots as Slot[]) {
         expect(Date.parse(slot.end)).toBeGreaterThan(Date.parse(slot.start))
       }
     },
@@ -88,26 +91,38 @@ describe('GET /resources/:id/availability', () => {
 
     const first = await api.getAvailability(id, '2026-07-20', '2026-07-21')
     const second = await api.getAvailability(id, '2026-07-20', '2026-07-21')
-    expect(second.json()).toEqual(first.json())
+    expect(second.json<AvailabilityResponse>()).toEqual(first.json<AvailabilityResponse>())
   })
 
   it('reflects a schedule change immediately', async () => {
     const id = await api.givenResource(aResource())
     await api.givenSchedule(id, [aWindow(WEEKDAYS.monday, '09:00', '12:00')])
-    expect((await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots).toHaveLength(3)
+    expect(
+      (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json<AvailabilityResponse>()
+        .slots,
+    ).toHaveLength(3)
 
     await api.givenSchedule(id, [aWindow(WEEKDAYS.monday, '09:00', '10:00')])
-    expect((await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots).toHaveLength(1)
+    expect(
+      (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json<AvailabilityResponse>()
+        .slots,
+    ).toHaveLength(1)
   })
 
   it('reflects reactivation', async () => {
     const id = await api.givenResource(aResource())
     await api.givenSchedule(id, [aWindow(WEEKDAYS.monday, '09:00', '12:00')])
     await api.patchResource(id, { is_active: false })
-    expect((await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots).toEqual([])
+    expect(
+      (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json<AvailabilityResponse>()
+        .slots,
+    ).toEqual([])
 
     await api.patchResource(id, { is_active: true })
-    expect((await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots).toHaveLength(3)
+    expect(
+      (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json<AvailabilityResponse>()
+        .slots,
+    ).toHaveLength(3)
   })
 
   it('keeps resources independent', async () => {
@@ -115,7 +130,10 @@ describe('GET /resources/:id/availability', () => {
     const idle = await api.givenResource(aResource())
     await api.givenSchedule(busy, windowsOn([0, 1, 2, 3, 4, 5, 6], '09:00', '10:00'))
 
-    expect((await api.getAvailability(idle, '2026-07-20', '2026-07-27')).json().slots).toEqual([])
+    expect(
+      (await api.getAvailability(idle, '2026-07-20', '2026-07-27')).json<AvailabilityResponse>()
+        .slots,
+    ).toEqual([])
   })
 
   it('handles a range at the configured maximum width', async () => {
@@ -124,7 +142,7 @@ describe('GET /resources/:id/availability', () => {
 
     const response = await api.getAvailability(id, '2026-01-01', '2027-01-01')
     expect(response.statusCode).toBe(200)
-    expect(response.json().slots).toHaveLength(365)
+    expect(response.json<AvailabilityResponse>().slots).toHaveLength(365)
   })
 
   it.each([
@@ -135,7 +153,7 @@ describe('GET /resources/:id/availability', () => {
     const id = await api.givenResource(aResource())
     const response = await api.getAvailability(id, from, to)
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('invalid_range')
+    expect(response.json<ErrorResponse>().error).toBe('invalid_range')
   })
 
   it.each(['20-07-2026', 'tomorrow', '2026-07'])('rejects the malformed date %s', async (from) => {
@@ -147,7 +165,7 @@ describe('GET /resources/:id/availability', () => {
   it('returns 404 for an unknown resource', async () => {
     const response = await api.getAvailability(unknownUuid(), '2026-07-20', '2026-07-21')
     expect(response.statusCode).toBe(404)
-    expect(response.json().error).toBe('not_found')
+    expect(response.json<ErrorResponse>().error).toBe('not_found')
   })
 })
 
@@ -168,7 +186,9 @@ describe('availability reflects bookings', () => {
       end_time: at('11:00'),
     })
 
-    const slots = (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots
+    const slots = (
+      await api.getAvailability(id, '2026-07-20', '2026-07-21')
+    ).json<AvailabilityResponse>().slots
     expect(slots.map((slot: Slot) => slot.available)).toEqual([true, false, true])
   })
 
@@ -180,7 +200,9 @@ describe('availability reflects bookings', () => {
       end_time: at('11:00'),
     })
 
-    const slots = (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots
+    const slots = (
+      await api.getAvailability(id, '2026-07-20', '2026-07-21')
+    ).json<AvailabilityResponse>().slots
     expect(slots.map((slot: Slot) => slot.available)).toEqual([false, false, true])
   })
 
@@ -194,7 +216,8 @@ describe('availability reflects bookings', () => {
       end_time: at('10:00'),
     })
     expect(
-      (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots[0].available,
+      (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json<AvailabilityResponse>()
+        .slots[0]?.available,
     ).toBe(true)
 
     await api.createBooking(id, {
@@ -203,7 +226,8 @@ describe('availability reflects bookings', () => {
       end_time: at('10:00'),
     })
     expect(
-      (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots[0].available,
+      (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json<AvailabilityResponse>()
+        .slots[0]?.available,
     ).toBe(false)
   })
 
@@ -216,8 +240,10 @@ describe('availability reflects bookings', () => {
       hold: true,
     })
 
-    const slots = (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots
-    expect(slots[0].available).toBe(false)
+    const slots = (
+      await api.getAvailability(id, '2026-07-20', '2026-07-21')
+    ).json<AvailabilityResponse>().slots
+    expect(slots[0]?.available).toBe(false)
   })
 
   it('ignores an expired hold without waiting for a sweep', async () => {
@@ -236,8 +262,10 @@ describe('availability reflects bookings', () => {
       .execute()
 
     // The row is still `held` in the table; the read filters it by predicate.
-    const slots = (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots
-    expect(slots[0].available).toBe(true)
+    const slots = (
+      await api.getAvailability(id, '2026-07-20', '2026-07-21')
+    ).json<AvailabilityResponse>().slots
+    expect(slots[0]?.available).toBe(true)
   })
 
   it('ignores cancelled bookings', async () => {
@@ -249,7 +277,9 @@ describe('availability reflects bookings', () => {
     })
     await api.bookingAction(booking, 'cancel')
 
-    const slots = (await api.getAvailability(id, '2026-07-20', '2026-07-21')).json().slots
-    expect(slots[0].available).toBe(true)
+    const slots = (
+      await api.getAvailability(id, '2026-07-20', '2026-07-21')
+    ).json<AvailabilityResponse>().slots
+    expect(slots[0]?.available).toBe(true)
   })
 })

@@ -8,6 +8,7 @@ import {
 } from '../datasets/schedule-validation.js'
 import { aDayBasedResource, aResource } from '../resources.js'
 import { expectError, type ResourceKind, type Suite } from './types.js'
+import type { ScheduleResponse } from '../bodies.js'
 
 const resourceFor = (kind: ResourceKind) => (kind === 'day' ? aDayBasedResource() : aResource())
 
@@ -21,7 +22,7 @@ export const acceptedSchedulesSuite: Suite<ScheduleCase> = {
     if (response.statusCode !== 200) {
       return `expected 200, got ${response.statusCode}: ${response.body.slice(0, 200)}`
     }
-    const stored = response.json().length
+    const stored = response.json<ScheduleResponse>().length
     return stored === testCase.rules.length
       ? null
       : `expected ${testCase.rules.length} rules, got ${stored}`

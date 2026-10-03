@@ -1,6 +1,7 @@
 import { notFoundCases, unknownRoutes, type NotFoundCase } from '../datasets/not-found.js'
 import { unknownUuid } from '../ids.js'
 import { expectStatus, type Suite } from './types.js'
+import type { ErrorResponse } from '../bodies.js'
 
 export const notFoundSuite: Suite<NotFoundCase> = {
   name: 'Unknown resource',
@@ -12,7 +13,7 @@ export const notFoundSuite: Suite<NotFoundCase> = {
 
     const status = expectStatus(response, 404)
     if (status) return status
-    const code = response.json()?.error
+    const code = response.json<ErrorResponse>()?.error
     return code === 'not_found' ? null : `expected error "not_found", got "${code}"`
   },
 }
@@ -25,7 +26,7 @@ export const unknownRouteSuite: Suite<string> = {
     const response = await send({ method: 'GET', url: path })
     const status = expectStatus(response, 404)
     if (status) return status
-    const body = response.json()
+    const body = response.json<ErrorResponse>()
     return body?.error === 'not_found' && typeof body?.message === 'string'
       ? null
       : `expected the uniform 404 body, got ${response.body.slice(0, 120)}`

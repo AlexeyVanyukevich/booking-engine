@@ -10,6 +10,7 @@ import {
 } from '../datasets/resource-validation.js'
 import { aResource } from '../resources.js'
 import { expectError, expectFields, type Suite } from './types.js'
+import type { ResourceResponse } from '../bodies.js'
 
 export const acceptedResourcesSuite: Suite<AcceptedResourceCase> = {
   name: 'Resource creation',
@@ -20,7 +21,7 @@ export const acceptedResourcesSuite: Suite<AcceptedResourceCase> = {
     if (response.statusCode !== 201) {
       return `expected 201, got ${response.statusCode}: ${response.body.slice(0, 200)}`
     }
-    track(response.json().id)
+    track(response.json<ResourceResponse>().id)
     return expectFields(response, testCase.expected)
   },
 }

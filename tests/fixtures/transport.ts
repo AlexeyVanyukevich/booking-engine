@@ -17,7 +17,8 @@ export interface TransportRequest {
 export interface TransportResponse {
   statusCode: number
   body: string
-  json: () => any
+  /** The parsed body, as the type the caller names; `unknown` until it names one. */
+  json: <T = unknown>() => T
 }
 
 export type Transport = (request: TransportRequest) => Promise<TransportResponse>

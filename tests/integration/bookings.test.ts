@@ -19,6 +19,12 @@ import {
   resetDbWithTenant,
   testAuthorization,
 } from './helpers.js'
+import type {
+  AvailabilityResponse,
+  BookingListResponse,
+  BookingResponse,
+  ErrorResponse,
+} from '../fixtures/bodies.js'
 
 let api: Api
 let close: () => Promise<void>
@@ -71,7 +77,7 @@ describe('POST /resources/:id/bookings', () => {
     })
 
     expect(response.statusCode).toBe(201)
-    expect(response.json()).toMatchObject({
+    expect(response.json<BookingResponse>()).toMatchObject({
       resource_id: id,
       status: 'confirmed',
       customer_id: 'c-1',
@@ -102,11 +108,13 @@ describe('POST /resources/:id/bookings', () => {
     })
 
     expect(response.statusCode).toBe(201)
-    expect(response.json().status).toBe('held')
+    expect(response.json<BookingResponse>().status).toBe('held')
     // `held_until` is now computed by Postgres, so this compares two clocks. Fifteen minutes
     // of headroom makes that safe: only skew on that scale could flip it, and skew that large
     // is the failure this comparison would be right to report.
-    expect(Date.parse(response.json().held_until)).toBeGreaterThan(Date.now())
+    expect(Date.parse(response.json<BookingResponse>().held_until ?? '')).toBeGreaterThan(
+      Date.now(),
+    )
   })
 
   it('rejects hold_minutes without hold', async () => {
@@ -118,7 +126,7 @@ describe('POST /resources/:id/bookings', () => {
       hold_minutes: 15,
     })
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('validation_error')
+    expect(response.json<ErrorResponse>().error).toBe('validation_error')
   })
 
   it('rejects a hold longer than the configured maximum', async () => {
@@ -143,7 +151,7 @@ describe('POST /resources/:id/bookings', () => {
       end_time: rejected.end_time,
     })
     expect(response.statusCode).toBe(rejected.status)
-    expect(response.json().error).toBe(rejected.error)
+    expect(response.json<ErrorResponse>().error).toBe(rejected.error)
   })
 
   it('refuses a second booking overlapping the first', async () => {
@@ -160,7 +168,7 @@ describe('POST /resources/:id/bookings', () => {
       end_time: at('11:00'),
     })
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('slot_unavailable')
+    expect(response.json<ErrorResponse>().error).toBe('slot_unavailable')
   })
 
   it('accepts a booking that merely touches another', async () => {
@@ -197,7 +205,7 @@ describe('POST /resources/:id/bookings', () => {
     expect(response.statusCode).toBe(201)
 
     // The stale hold was moved out of `held` by the sweep inside the same transaction.
-    expect((await api.getBooking(held)).json().status).toBe('expired')
+    expect((await api.getBooking(held)).json<BookingResponse>().status).toBe('expired')
   })
 
   it('still refuses a slot whose hold is live', async () => {
@@ -227,7 +235,7 @@ describe('POST /resources/:id/bookings', () => {
       end_time: at('10:00'),
     })
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('resource_inactive')
+    expect(response.json<ErrorResponse>().error).toBe('resource_inactive')
   })
 
   it('rejects an unknown field in the body', async () => {
@@ -281,7 +289,7 @@ describe('POST /resources/:id/bookings', () => {
       end_time: '2026-07-20T08:00:00Z',
     })
     expect(response.statusCode).toBe(201)
-    expect(response.json()).toMatchObject({
+    expect(response.json<BookingResponse>()).toMatchObject({
       start_time: at('09:00'),
       end_time: at('10:00'),
     })
@@ -299,13 +307,13 @@ describe('GET /bookings/:id', () => {
 
     const response = await api.getBooking(booking)
     expect(response.statusCode).toBe(200)
-    expect(response.json().id).toBe(booking)
+    expect(response.json<BookingResponse>().id).toBe(booking)
   })
 
   it('returns 404 for an unknown booking', async () => {
     const response = await api.getBooking(unknownUuid())
     expect(response.statusCode).toBe(404)
-    expect(response.json().error).toBe('not_found')
+    expect(response.json<ErrorResponse>().error).toBe('not_found')
   })
 
   it('never leaks the idempotency key', async () => {
@@ -317,7 +325,9 @@ describe('GET /bookings/:id', () => {
       idempotency_key: 'k-1',
     })
 
-    expect((await api.getBooking(booking)).json()).not.toHaveProperty('idempotency_key')
+    expect((await api.getBooking(booking)).json<BookingResponse>()).not.toHaveProperty(
+      'idempotency_key',
+    )
   })
 })
 
@@ -364,7 +374,7 @@ describe('shared capacity', () => {
       end_time: at('10:00'),
     })
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('slot_unavailable')
+    expect(response.json<ErrorResponse>().error).toBe('slot_unavailable')
   })
 
   it('counts occupancy per slot, not per overlapping booking', async () => {
@@ -425,7 +435,7 @@ describe('shared capacity', () => {
       end_time: at('10:00'),
     })
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('slot_unavailable')
+    expect(response.json<ErrorResponse>().error).toBe('slot_unavailable')
   })
 
   it('frees the capacity a lapsed hold was occupying', async () => {
@@ -444,7 +454,7 @@ describe('shared capacity', () => {
       end_time: at('10:00'),
     })
     expect(response.statusCode).toBe(201)
-    expect((await api.getBooking(held)).json().status).toBe('expired')
+    expect((await api.getBooking(held)).json<BookingResponse>().status).toBe('expired')
   })
 
   it('ignores cancelled bookings when counting', async () => {
@@ -509,7 +519,7 @@ describe('a self-overlapping day grid', () => {
       end_time: day('23'),
     })
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('slot_unavailable')
+    expect(response.json<ErrorResponse>().error).toBe('slot_unavailable')
   })
 
   it('still accepts a shared booking on a slot that shares no day', async () => {
@@ -530,10 +540,12 @@ describe('a self-overlapping day grid', () => {
     const id = await aTwoDayResource({ concurrency_mode: 'exclusive' })
     await api.givenBooking(id, { customer_id: 'c-1', start_time: day('20'), end_time: day('22') })
 
-    const slots = (await api.getAvailability(id, '2026-07-20', '2026-07-22')).json().slots
+    const slots = (
+      await api.getAvailability(id, '2026-07-20', '2026-07-22')
+    ).json<AvailabilityResponse>().slots
     const contested = slots.find((slot: { start: string }) => slot.start === day('21'))
     expect(contested).toBeDefined()
-    expect(contested.available).toBe(false)
+    expect(contested?.available).toBe(false)
 
     const refused = await api.createBooking(id, {
       customer_id: 'c-2',
@@ -590,7 +602,7 @@ describe('a resource changed while a booking is in flight', () => {
     )
 
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('resource_inactive')
+    expect(response.json<ErrorResponse>().error).toBe('resource_inactive')
   })
 
   it('counts against the capacity the resource has now, not the one it had', async () => {
@@ -613,7 +625,7 @@ describe('a resource changed while a booking is in flight', () => {
     )
 
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('slot_unavailable')
+    expect(response.json<ErrorResponse>().error).toBe('slot_unavailable')
   })
 })
 
@@ -633,7 +645,7 @@ describe('idempotency', () => {
 
     const second = await api.createBooking(id, payload)
     expect(second.statusCode).toBe(200)
-    expect(second.json().id).toBe(first.json().id)
+    expect(second.json<BookingResponse>().id).toBe(first.json<BookingResponse>().id)
   })
 
   it('rejects the same key describing a different booking', async () => {
@@ -642,7 +654,7 @@ describe('idempotency', () => {
 
     const response = await api.createBooking(id, { ...payload, end_time: at('11:00') })
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('idempotency_key_reused')
+    expect(response.json<ErrorResponse>().error).toBe('idempotency_key_reused')
   })
 
   it('rejects the same key for a different customer', async () => {
@@ -662,7 +674,7 @@ describe('idempotency', () => {
 
     const second = await api.createBooking(id, { ...payload, hold: true, hold_minutes: 5 })
     expect(second.statusCode).toBe(200)
-    expect(second.json().id).toBe(first.json().id)
+    expect(second.json<BookingResponse>().id).toBe(first.json<BookingResponse>().id)
   })
 
   it('keeps keys separate per resource', async () => {
@@ -691,7 +703,7 @@ describe('idempotency', () => {
 
     const second = await api.createBooking(id, payload)
     expect(second.statusCode).toBe(200)
-    expect(second.json().id).toBe(first.json().id)
+    expect(second.json<BookingResponse>().id).toBe(first.json<BookingResponse>().id)
   })
 
   it('still refuses a different key on that same full shared resource', async () => {
@@ -702,7 +714,7 @@ describe('idempotency', () => {
 
     const response = await api.createBooking(id, { ...payload, idempotency_key: 'order-2' })
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('slot_unavailable')
+    expect(response.json<ErrorResponse>().error).toBe('slot_unavailable')
   })
 
   it('returns one booking when two identical requests race', async () => {
@@ -714,7 +726,7 @@ describe('idempotency', () => {
     ])
 
     expect([first.statusCode, second.statusCode].sort()).toEqual([200, 201])
-    expect(first.json().id).toBe(second.json().id)
+    expect(first.json<BookingResponse>().id).toBe(second.json<BookingResponse>().id)
   })
 })
 
@@ -756,20 +768,20 @@ describe('the booking lifecycle', () => {
     const response = await api.bookingAction(id, transition.action)
 
     expect(response.statusCode).toBe(transition.status)
-    if (transition.becomes) expect(response.json().status).toBe(transition.becomes)
-    if (transition.error) expect(response.json().error).toBe(transition.error)
+    if (transition.becomes) expect(response.json<BookingResponse>().status).toBe(transition.becomes)
+    if (transition.error) expect(response.json<ErrorResponse>().error).toBe(transition.error)
   })
 
   it('clears held_until when a hold is confirmed', async () => {
     const id = await aBookingIn('held')
     const response = await api.bookingAction(id, 'confirm')
-    expect(response.json().held_until).toBeNull()
+    expect(response.json<BookingResponse>().held_until).toBeNull()
   })
 
   it('clears held_until when a hold is cancelled', async () => {
     const id = await aBookingIn('held')
     const response = await api.bookingAction(id, 'cancel')
-    expect(response.json().held_until).toBeNull()
+    expect(response.json<BookingResponse>().held_until).toBeNull()
   })
 
   it('frees the slot once a booking is cancelled', async () => {
@@ -792,7 +804,7 @@ describe('the booking lifecycle', () => {
   it('reports the current status when it refuses a transition', async () => {
     const id = await aBookingIn('completed')
     const response = await api.bookingAction(id, 'cancel')
-    expect(response.json().details).toMatchObject({ status: 'completed' })
+    expect(response.json<ErrorResponse>().details).toMatchObject({ status: 'completed' })
   })
 
   it('returns 404 for an unknown booking', async () => {
@@ -815,7 +827,7 @@ describe('the booking lifecycle', () => {
 
     const winner = cancel.statusCode === 200 ? 'cancelled' : 'completed'
     const final = await api.getBooking(id)
-    expect(final.json().status).toBe(winner)
+    expect(final.json<BookingResponse>().status).toBe(winner)
   })
 })
 
@@ -834,7 +846,7 @@ describe('POST /bookings/:id/reschedule', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject({
+    expect(response.json<BookingResponse>()).toMatchObject({
       id,
       status: 'confirmed',
       start_time: at('11:00'),
@@ -855,8 +867,8 @@ describe('POST /bookings/:id/reschedule', () => {
       start_time: at('11:00'),
       end_time: at('12:00'),
     })
-    expect(response.json().status).toBe('held')
-    expect(response.json().held_until).not.toBeNull()
+    expect(response.json<BookingResponse>().status).toBe('held')
+    expect(response.json<BookingResponse>().held_until).not.toBeNull()
   })
 
   it('does not block itself when the interval is unchanged', async () => {
@@ -907,7 +919,7 @@ describe('POST /bookings/:id/reschedule', () => {
       end_time: at('12:00'),
     })
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('slot_unavailable')
+    expect(response.json<ErrorResponse>().error).toBe('slot_unavailable')
   })
 
   // The refusal above comes from the exclusion constraint, since the resource is `exclusive`.
@@ -931,9 +943,11 @@ describe('POST /bookings/:id/reschedule', () => {
       end_time: at('12:00'),
     })
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('slot_unavailable')
+    expect(response.json<ErrorResponse>().error).toBe('slot_unavailable')
 
-    expect((await api.getBooking(id)).json()).toMatchObject({ start_time: at('09:00') })
+    expect((await api.getBooking(id)).json<BookingResponse>()).toMatchObject({
+      start_time: at('09:00'),
+    })
   })
 
   it('leaves the original booking untouched when the move is refused', async () => {
@@ -951,7 +965,7 @@ describe('POST /bookings/:id/reschedule', () => {
 
     await api.rescheduleBooking(id, { start_time: at('11:00'), end_time: at('12:00') })
 
-    expect((await api.getBooking(id)).json()).toMatchObject({
+    expect((await api.getBooking(id)).json<BookingResponse>()).toMatchObject({
       start_time: at('09:00'),
       end_time: at('10:00'),
     })
@@ -970,7 +984,7 @@ describe('POST /bookings/:id/reschedule', () => {
       end_time: at('10:30'),
     })
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('invalid_slot_boundary')
+    expect(response.json<ErrorResponse>().error).toBe('invalid_slot_boundary')
   })
 
   it.each(['cancelled', 'completed', 'no_show'] as const)(
@@ -982,7 +996,7 @@ describe('POST /bookings/:id/reschedule', () => {
         end_time: at('12:00'),
       })
       expect(response.statusCode).toBe(409)
-      expect(response.json().error).toBe('invalid_state_transition')
+      expect(response.json<ErrorResponse>().error).toBe('invalid_state_transition')
     },
   )
 
@@ -1024,7 +1038,9 @@ describe('listings', () => {
     const response = await api.listResourceBookings(resource, '?from=2026-07-20&to=2026-07-21')
     expect(response.statusCode).toBe(200)
 
-    const starts = response.json().map((booking: { start_time: string }) => booking.start_time)
+    const starts = response
+      .json<BookingListResponse>()
+      .map((booking: { start_time: string }) => booking.start_time)
     expect(starts).toEqual([at('09:00'), at('10:00'), at('11:00')])
   })
 
@@ -1032,7 +1048,7 @@ describe('listings', () => {
     const { resource } = await threeBookings()
 
     const response = await api.listResourceBookings(resource, '?from=2026-07-21&to=2026-07-22')
-    expect(response.json()).toEqual([])
+    expect(response.json<BookingListResponse>()).toEqual([])
   })
 
   // Both cases below use a P1D resource so a booking can straddle a date boundary: one
@@ -1051,7 +1067,7 @@ describe('listings', () => {
     })
 
     const response = await api.listResourceBookings(resource, '?from=2026-07-20&to=2026-07-21')
-    expect(response.json()).toHaveLength(1)
+    expect(response.json<BookingListResponse>()).toHaveLength(1)
   })
 
   it('includes a booking that starts inside the window and reaches past it', async () => {
@@ -1066,7 +1082,7 @@ describe('listings', () => {
     })
 
     const response = await api.listResourceBookings(resource, '?from=2026-07-20&to=2026-07-21')
-    expect(response.json()).toHaveLength(1)
+    expect(response.json<BookingListResponse>()).toHaveLength(1)
   })
 
   it('filters by status', async () => {
@@ -1076,12 +1092,12 @@ describe('listings', () => {
     expect(
       (
         await api.listResourceBookings(resource, '?from=2026-07-20&to=2026-07-21&status=cancelled')
-      ).json(),
+      ).json<BookingListResponse>(),
     ).toHaveLength(1)
     expect(
       (
         await api.listResourceBookings(resource, '?from=2026-07-20&to=2026-07-21&status=confirmed')
-      ).json(),
+      ).json<BookingListResponse>(),
     ).toHaveLength(2)
   })
 
@@ -1108,7 +1124,7 @@ describe('listings', () => {
       '?customer_id=c-1&from=2026-07-20&to=2026-07-21',
     )
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toHaveLength(2)
+    expect(response.json<BookingListResponse>()).toHaveLength(2)
   })
 
   // Once required, because the query would otherwise be bounded only by the date window
@@ -1135,7 +1151,7 @@ describe('listings', () => {
     const resource = await anHourlyResource()
     const response = await api.listResourceBookings(resource, query)
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('invalid_range')
+    expect(response.json<ErrorResponse>().error).toBe('invalid_range')
   })
 
   it('returns 404 for an unknown resource', async () => {
@@ -1163,7 +1179,7 @@ describe('listings', () => {
       '?customer_id=c-1&from=2026-07-19&to=2026-07-21',
     )
     const offsets = response
-      .json()
+      .json<BookingListResponse>()
       .map((booking: { start_time: string }) => booking.start_time.slice(-6))
     expect(new Set(offsets)).toEqual(new Set(['+02:00', '+12:00']))
   })
@@ -1179,7 +1195,7 @@ describe('a booking without a customer', () => {
     expect(response.statusCode).toBe(201)
     // Present and null, not absent: a caller reading the field should not have to tell
     // "no customer" from "field missing from this version of the API".
-    expect(response.json()).toHaveProperty('customer_id', null)
+    expect(response.json<BookingResponse>()).toHaveProperty('customer_id', null)
   })
 
   it('is invisible to a customer filter', async () => {
@@ -1189,7 +1205,7 @@ describe('a booking without a customer', () => {
     const response = await api.listCustomerBookings(
       '?customer_id=c-1&from=2026-07-20&to=2026-07-21',
     )
-    expect(response.json()).toEqual([])
+    expect(response.json<BookingListResponse>()).toEqual([])
   })
 
   it('still appears in the tenant-wide listing', async () => {
@@ -1198,8 +1214,8 @@ describe('a booking without a customer', () => {
 
     const response = await api.listCustomerBookings('?from=2026-07-20&to=2026-07-21')
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toHaveLength(1)
-    expect(response.json()[0].customer_id).toBeNull()
+    expect(response.json<BookingListResponse>()).toHaveLength(1)
+    expect(response.json<BookingListResponse>()[0]?.customer_id).toBeNull()
   })
 
   it('and the resource listing too', async () => {
@@ -1207,13 +1223,13 @@ describe('a booking without a customer', () => {
     await api.givenBooking(id, slot)
 
     const response = await api.listResourceBookings(id, '?from=2026-07-20&to=2026-07-21')
-    expect(response.json()).toHaveLength(1)
+    expect(response.json<BookingListResponse>()).toHaveLength(1)
   })
 
   it('does not exempt the tenant-wide listing from the range bound', async () => {
     const response = await api.listCustomerBookings('?from=2026-01-01&to=2028-01-01')
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('invalid_range')
+    expect(response.json<ErrorResponse>().error).toBe('invalid_range')
   })
 
   it('still refuses a blank customer_id when one is sent', async () => {
@@ -1235,7 +1251,7 @@ describe('idempotency across a null customer', () => {
 
     expect(first.statusCode).toBe(201)
     expect(second.statusCode).toBe(200)
-    expect(second.json().id).toBe(first.json().id)
+    expect(second.json<BookingResponse>().id).toBe(first.json<BookingResponse>().id)
   })
 
   // `undefined` and `null` must not read as two different customers, and a customer that
@@ -1250,6 +1266,6 @@ describe('idempotency across a null customer', () => {
 
     const response = await api.createBooking(id, { ...slot, ...retry, idempotency_key: 'k2' })
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('idempotency_key_reused')
+    expect(response.json<ErrorResponse>().error).toBe('idempotency_key_reused')
   })
 })

@@ -1,6 +1,7 @@
 import type { ResourcePayload } from './resources.js'
 import type { ExceptionInput, ScheduleRule } from './schedules.js'
 import type { Transport } from './transport.js'
+import type { BookingResponse, ResourceResponse } from './bodies.js'
 
 /**
  * A thin client over a transport, so callers describe intent rather than repeating URLs and
@@ -127,7 +128,7 @@ export class Api {
         `Fixture setup failed: expected 201, got ${response.statusCode} ${response.body}`,
       )
     }
-    return response.json().id as string
+    return response.json<ResourceResponse>().id as string
   }
 
   /** Installs a schedule, failing loudly if it was rejected. */
@@ -159,6 +160,6 @@ export class Api {
         `Fixture setup failed: expected 201, got ${response.statusCode} ${response.body}`,
       )
     }
-    return response.json().id as string
+    return response.json<BookingResponse>().id as string
   }
 }
