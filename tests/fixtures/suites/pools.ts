@@ -1,5 +1,6 @@
 import { rejectedMemberships, type RejectedMembership } from '../datasets/pool-membership.js'
 import { expectStatus, type Suite } from './types.js'
+import type { BookingResponse, ErrorResponse, ResourceResponse } from '../bodies.js'
 
 const poolBase = {
   timezone: 'Europe/Warsaw',
@@ -25,7 +26,8 @@ export const poolMembershipSuite: Suite<RejectedMembership> = {
     const status = expectStatus(response, 400)
     if (status) return status
 
-    const body = response.json()
+    // `details` is free-form in the error contract; this error names the broken rule there.
+    const body = response.json<ErrorResponse & { details?: { rule?: string } }>()
     if (body?.error !== 'invalid_pool_membership') {
       return `expected error "invalid_pool_membership", got "${body?.error}"`
     }
@@ -65,9 +67,9 @@ export const poolMembershipAcceptedSuite: Suite<PoolMembershipAcceptedCase> = {
     const fetched = await api.getResource(memberId)
     const status = expectStatus(fetched, 200)
     if (status) return status
-    return fetched.json()?.pool_id === poolId
+    return fetched.json<ResourceResponse>()?.pool_id === poolId
       ? null
-      : `expected pool_id "${poolId}", got "${fetched.json()?.pool_id}"`
+      : `expected pool_id "${poolId}", got "${fetched.json<ResourceResponse>()?.pool_id}"`
   },
 }
 
@@ -115,7 +117,7 @@ export const poolBookingSuite: Suite<PoolBookingCase> = {
       const status = expectStatus(response, 201)
       if (status) return `booking ${i + 1}: ${status}`
 
-      const resourceId = response.json()?.resource_id
+      const resourceId = response.json<BookingResponse>()?.resource_id
       if (resourceId === poolId) return 'the booking points at the pool rather than a member'
       if (!memberIds.includes(resourceId)) return `resource_id ${resourceId} is not a member`
       if (landedOn.has(resourceId)) return `two bookings landed on the same member ${resourceId}`
@@ -125,9 +127,9 @@ export const poolBookingSuite: Suite<PoolBookingCase> = {
     const refused = await api.createBooking(poolId, night)
     const status = expectStatus(refused, 409)
     if (status) return `after ${testCase.accepted} bookings: ${status}`
-    return refused.json()?.error === 'slot_unavailable'
+    return refused.json<ErrorResponse>()?.error === 'slot_unavailable'
       ? null
-      : `expected error "slot_unavailable", got "${refused.json()?.error}"`
+      : `expected error "slot_unavailable", got "${refused.json<ErrorResponse>()?.error}"`
   },
 }
 
@@ -157,8 +159,8 @@ export const poolDeletionSuite: Suite<PoolDeletionCase> = {
     const response = await api.deleteResource(poolId)
     const status = expectStatus(response, 409)
     if (status) return status
-    return response.json()?.error === 'pool_has_members'
+    return response.json<ErrorResponse>()?.error === 'pool_has_members'
       ? null
-      : `expected error "pool_has_members", got "${response.json()?.error}"`
+      : `expected error "pool_has_members", got "${response.json<ErrorResponse>()?.error}"`
   },
 }

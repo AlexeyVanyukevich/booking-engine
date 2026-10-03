@@ -11,6 +11,7 @@ import {
   rejectedExceptions,
 } from '../fixtures/datasets/exception-validation.js'
 import { buildTestApp, closeTestDb, resetDbWithTenant, testAuthorization } from './helpers.js'
+import type { ErrorResponse, ExceptionListResponse, ExceptionResponse } from '../fixtures/bodies.js'
 
 let api: Api
 let close: () => Promise<void>
@@ -40,7 +41,7 @@ describe('PUT /resources/:id/exceptions/:date', () => {
     const id = await api.givenResource(resourceFor(kind))
     const response = await api.putException(id, { date: DATE, ...body })
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject({ date: DATE, ...body })
+    expect(response.json<ExceptionResponse>()).toMatchObject({ date: DATE, ...body })
   })
 
   it.each(rejectedExceptions)(
@@ -49,14 +50,16 @@ describe('PUT /resources/:id/exceptions/:date', () => {
       const id = await api.givenResource(resourceFor(kind))
       const response = await api.putException(id, { date: DATE, ...body })
       expect(response.statusCode).toBe(400)
-      expect(response.json().error).toBe(expectedError)
+      expect(response.json<ErrorResponse>().error).toBe(expectedError)
     },
   )
 
   it.each(rejectedExceptions)('stores nothing after rejecting $name', async ({ kind, body }) => {
     const id = await api.givenResource(resourceFor(kind))
     await api.putException(id, { date: DATE, ...body })
-    expect((await api.listExceptions(id, '2026-07-01', '2026-08-01')).json()).toEqual([])
+    expect(
+      (await api.listExceptions(id, '2026-07-01', '2026-08-01')).json<ExceptionListResponse>(),
+    ).toEqual([])
   })
 
   it.each(malformedExceptionDates)('rejects the malformed date %s', async (date) => {
@@ -77,21 +80,30 @@ describe('PUT /resources/:id/exceptions/:date', () => {
     const second = await api.putException(id, alteredHours(DATE, '11:00', '15:00'))
 
     expect(second.statusCode).toBe(200)
-    expect(second.json()).toMatchObject({ start_time: '11:00', end_time: '15:00' })
-    expect((await api.listExceptions(id, '2026-07-01', '2026-08-01')).json()).toHaveLength(1)
+    expect(second.json<ExceptionResponse>()).toMatchObject({
+      start_time: '11:00',
+      end_time: '15:00',
+    })
+    expect(
+      (await api.listExceptions(id, '2026-07-01', '2026-08-01')).json<ExceptionListResponse>(),
+    ).toHaveLength(1)
   })
 
   it('can turn altered hours into a day off and back', async () => {
     const id = await api.givenResource(aResource())
     await api.putException(id, alteredHours(DATE, '10:00', '14:00'))
     await api.putException(id, aDayOff(DATE))
-    expect((await api.listExceptions(id, '2026-07-01', '2026-08-01')).json()[0]).toMatchObject({
+    expect(
+      (await api.listExceptions(id, '2026-07-01', '2026-08-01')).json<ExceptionListResponse>()[0],
+    ).toMatchObject({
       start_time: null,
       end_time: null,
     })
 
     await api.putException(id, alteredHours(DATE, '12:00', '13:00'))
-    expect((await api.listExceptions(id, '2026-07-01', '2026-08-01')).json()[0]).toMatchObject({
+    expect(
+      (await api.listExceptions(id, '2026-07-01', '2026-08-01')).json<ExceptionListResponse>()[0],
+    ).toMatchObject({
       start_time: '12:00',
       end_time: '13:00',
     })
@@ -102,14 +114,16 @@ describe('PUT /resources/:id/exceptions/:date', () => {
     const second = await api.givenResource(aResource())
     await api.putException(first, aDayOff(DATE))
 
-    expect((await api.listExceptions(second, '2026-07-01', '2026-08-01')).json()).toEqual([])
+    expect(
+      (await api.listExceptions(second, '2026-07-01', '2026-08-01')).json<ExceptionListResponse>(),
+    ).toEqual([])
   })
 
   it('stores the date exactly as given, without timezone drift', async () => {
     // A resource far from UTC is the case where a Date-based parser would shift the day.
     const id = await api.givenResource(aResource({ timezone: 'Pacific/Auckland' }))
     const response = await api.putException(id, aDayOff('2026-01-01'))
-    expect(response.json().date).toBe('2026-01-01')
+    expect(response.json<ExceptionResponse>().date).toBe('2026-01-01')
   })
 
   it('returns 404 for an unknown resource', async () => {
@@ -125,7 +139,7 @@ describe('GET /resources/:id/exceptions', () => {
     await api.givenExceptions(id, dates.map(aDayOff))
 
     const listed = await api.listExceptions(id, '2026-07-19', '2026-07-21')
-    expect(listed.json().map((row: { date: string }) => row.date)).toEqual([
+    expect(listed.json<ExceptionListResponse>().map((row: { date: string }) => row.date)).toEqual([
       '2026-07-19',
       '2026-07-20',
     ])
@@ -136,13 +150,17 @@ describe('GET /resources/:id/exceptions', () => {
     await api.givenExceptions(id, [...dates].reverse().map(aDayOff))
 
     const listed = await api.listExceptions(id, '2026-07-01', '2026-08-01')
-    expect(listed.json().map((row: { date: string }) => row.date)).toEqual(dates)
+    expect(listed.json<ExceptionListResponse>().map((row: { date: string }) => row.date)).toEqual(
+      dates,
+    )
   })
 
   it('returns an empty list when nothing falls in the range', async () => {
     const id = await api.givenResource(aResource())
     await api.givenExceptions(id, dates.map(aDayOff))
-    expect((await api.listExceptions(id, '2026-09-01', '2026-09-30')).json()).toEqual([])
+    expect(
+      (await api.listExceptions(id, '2026-09-01', '2026-09-30')).json<ExceptionListResponse>(),
+    ).toEqual([])
   })
 
   it.each([
@@ -153,7 +171,7 @@ describe('GET /resources/:id/exceptions', () => {
     const id = await api.givenResource(aResource())
     const response = await api.listExceptions(id, from, to)
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('invalid_range')
+    expect(response.json<ErrorResponse>().error).toBe('invalid_range')
   })
 
   it.each([
@@ -179,7 +197,9 @@ describe('DELETE /resources/:id/exceptions/:date', () => {
     await api.putException(id, aDayOff(DATE))
 
     expect((await api.deleteException(id, DATE)).statusCode).toBe(204)
-    expect((await api.listExceptions(id, '2026-07-01', '2026-08-01')).json()).toEqual([])
+    expect(
+      (await api.listExceptions(id, '2026-07-01', '2026-08-01')).json<ExceptionListResponse>(),
+    ).toEqual([])
   })
 
   it('is idempotent: deleting a date with no exception still returns 204', async () => {
@@ -195,7 +215,7 @@ describe('DELETE /resources/:id/exceptions/:date', () => {
 
     expect(
       (await api.listExceptions(id, '2026-07-01', '2026-08-01'))
-        .json()
+        .json<ExceptionListResponse>()
         .map((row: { date: string }) => row.date),
     ).toEqual(['2026-07-19'])
   })

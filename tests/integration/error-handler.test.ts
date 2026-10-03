@@ -5,6 +5,7 @@ import { withAuthorization, injectTransport } from '../fixtures/transport.js'
 import { unknownUuid } from '../fixtures/ids.js'
 import { aResource } from '../fixtures/resources.js'
 import { buildTestApp, closeTestDb, resetDbWithTenant, testAuthorization } from './helpers.js'
+import type { ErrorResponse, ResourceResponse } from '../fixtures/bodies.js'
 
 let app: FastifyInstance
 let api: Api
@@ -31,7 +32,10 @@ describe('error responses', () => {
   it.each(unmatched)('answers $name with the uniform 404 shape', async ({ method, url }) => {
     const response = await api.request({ method, url })
     expect(response.statusCode).toBe(404)
-    expect(response.json()).toEqual({ error: 'not_found', message: 'Route not found' })
+    expect(response.json<ErrorResponse>()).toEqual({
+      error: 'not_found',
+      message: 'Route not found',
+    })
   })
 
   /**
@@ -70,7 +74,7 @@ describe('error responses', () => {
     const response = await request()
     expect(response.statusCode).toBe(status)
 
-    const body = response.json()
+    const body = response.json<ErrorResponse>()
     expect(body.error).toBe(error)
     expect(typeof body.message).toBe('string')
     expect(body.message.length).toBeGreaterThan(0)
@@ -81,7 +85,7 @@ describe('error responses', () => {
 
   it('never exposes database structure in an error message', async () => {
     const response = await api.createResource({ ...aResource(), slot_duration: 'P1M' })
-    const serialized = JSON.stringify(response.json())
+    const serialized = JSON.stringify(response.json<ResourceResponse>())
 
     for (const leak of ['resources', 'kysely', 'postgres', 'pg_', 'select ', 'insert into']) {
       expect(serialized.toLowerCase()).not.toContain(leak)

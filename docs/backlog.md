@@ -114,18 +114,6 @@ commit that fixes it.
 - Impact: a consumer generating a client from the document has no type for those answers and no
   hint that `429` exists to be retried. The conventions table is the only place they appear.
 
-## Three `any`s remain in hand-written test code
-
-- Where: `tests/fixtures/transport.ts`, `TransportResponse.json`; `tests/fixtures/suites/types.ts`,
-  `Response.json`; `tests/integration/migrations.test.ts`, the `as any` on `db.insertInto(table)`
-- Found: 2026-10-01, while removing the `any` from the smoke suite list
-- Problem: the shared `typescript.md` rule allows `any` only in the `Kysely<any>` signature of
-  a migration. The two `json: () => any` let every test read response fields unchecked; the
-  `as any` sidesteps Kysely's table typing in a test that inserts into tables by name.
-- Impact: a misspelt response field in a test or a suite compiles and fails only at run time,
-  or passes against `undefined`. Typing `json` as `unknown` touches every test that reads a
-  body, which is why it was not done in passing.
-
 ## The pool booking path re-scans members one query pair at a time
 
 - Where: `src/modules/bookings/booking.service.ts`, `createInPool()`, the step-2 member loop

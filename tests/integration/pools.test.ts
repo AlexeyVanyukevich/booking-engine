@@ -24,6 +24,13 @@ import {
   resetDbWithTenant,
   testAuthorization,
 } from './helpers.js'
+import type {
+  AvailabilityResponse,
+  BookingResponse,
+  ErrorResponse,
+  ResourceResponse,
+  ScheduleResponse,
+} from '../fixtures/bodies.js'
 
 let api: Api
 let close: () => Promise<void>
@@ -76,11 +83,13 @@ interface Slot {
 async function aPoolWith(
   members: PoolAvailabilityCase['members'],
 ): Promise<{ id: string; memberIds: string[] }> {
-  const pool = (await api.createResource(poolBase)).json()
+  const pool = (await api.createResource(poolBase)).json<ResourceResponse>()
   const memberIds: string[] = []
 
   for (const spec of members) {
-    const member = (await api.createResource({ ...memberBase, pool_id: pool.id })).json()
+    const member = (
+      await api.createResource({ ...memberBase, pool_id: pool.id })
+    ).json<ResourceResponse>()
 
     await api.putSchedule(
       member.id,
@@ -106,18 +115,18 @@ async function aPoolWith(
 
 describe('pools', () => {
   it('accepts a member that matches its pool', async () => {
-    const pool = (await api.createResource(poolBase)).json()
+    const pool = (await api.createResource(poolBase)).json<ResourceResponse>()
     const member = await api.createResource({ ...memberBase, pool_id: pool.id })
     expect(member.statusCode).toBe(201)
-    expect(member.json().pool_id).toBe(pool.id)
+    expect(member.json<ResourceResponse>().pool_id).toBe(pool.id)
   })
 
   it.each(rejectedMemberships)('refuses when $name', async ({ member, pool, rule }) => {
-    const created = (await api.createResource({ ...poolBase, ...pool })).json()
+    const created = (await api.createResource({ ...poolBase, ...pool })).json<ResourceResponse>()
     const response = await api.createResource({ ...memberBase, ...member, pool_id: created.id })
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('invalid_pool_membership')
-    expect(response.json().details).toMatchObject({ rule })
+    expect(response.json<ErrorResponse>().error).toBe('invalid_pool_membership')
+    expect(response.json<ErrorResponse>().details).toMatchObject({ rule })
   })
 
   /**
@@ -129,12 +138,14 @@ describe('pools', () => {
   it.each(rejectedMemberships)(
     'refuses a patch joining a pool when $name',
     async ({ member, pool, rule }) => {
-      const created = (await api.createResource({ ...poolBase, ...pool })).json()
-      const joining = (await api.createResource({ ...memberBase, ...member })).json()
+      const created = (await api.createResource({ ...poolBase, ...pool })).json<ResourceResponse>()
+      const joining = (
+        await api.createResource({ ...memberBase, ...member })
+      ).json<ResourceResponse>()
       const response = await api.patchResource(joining.id, { pool_id: created.id })
       expect(response.statusCode).toBe(400)
-      expect(response.json().error).toBe('invalid_pool_membership')
-      expect(response.json().details).toMatchObject({ rule })
+      expect(response.json<ErrorResponse>().error).toBe('invalid_pool_membership')
+      expect(response.json<ErrorResponse>().details).toMatchObject({ rule })
     },
   )
 
@@ -147,38 +158,44 @@ describe('pools', () => {
   it.each(rejectedPoolGridPatches)(
     'refuses a patch to a pool that has members when $name',
     async ({ patch, fields }) => {
-      const pool = (await api.createResource(poolBase)).json()
+      const pool = (await api.createResource(poolBase)).json<ResourceResponse>()
       await api.createResource({ ...memberBase, pool_id: pool.id })
 
       const response = await api.patchResource(pool.id, patch)
       expect(response.statusCode).toBe(400)
-      expect(response.json().error).toBe('invalid_pool_membership')
-      expect(response.json().details).toMatchObject({ rule: 'grid', fields, pool_id: pool.id })
+      expect(response.json<ErrorResponse>().error).toBe('invalid_pool_membership')
+      expect(response.json<ErrorResponse>().details).toMatchObject({
+        rule: 'grid',
+        fields,
+        pool_id: pool.id,
+      })
     },
   )
 
   it.each(rejectedPoolGridPatches)(
     'accepts the same patch on a pool with no members when $name',
     async ({ patch }) => {
-      const pool = (await api.createResource(poolBase)).json()
+      const pool = (await api.createResource(poolBase)).json<ResourceResponse>()
       expect((await api.patchResource(pool.id, patch)).statusCode).toBe(200)
     },
   )
 
   /** An inactive member can be reactivated, so it still holds the pool's grid in place. */
   it('refuses a grid patch on a pool whose only member is inactive', async () => {
-    const pool = (await api.createResource(poolBase)).json()
-    const member = (await api.createResource({ ...memberBase, pool_id: pool.id })).json()
+    const pool = (await api.createResource(poolBase)).json<ResourceResponse>()
+    const member = (
+      await api.createResource({ ...memberBase, pool_id: pool.id })
+    ).json<ResourceResponse>()
     await api.patchResource(member.id, { is_active: false })
 
     const response = await api.patchResource(pool.id, { slot_duration: 'P7D' })
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('invalid_pool_membership')
+    expect(response.json<ErrorResponse>().error).toBe('invalid_pool_membership')
   })
 
   /** A patch that leaves the grid alone is not a membership question at all. */
   it('still accepts a non-grid patch on a pool that has members', async () => {
-    const pool = (await api.createResource(poolBase)).json()
+    const pool = (await api.createResource(poolBase)).json<ResourceResponse>()
     await api.createResource({ ...memberBase, pool_id: pool.id })
     expect((await api.patchResource(pool.id, { is_active: false })).statusCode).toBe(200)
   })
@@ -186,23 +203,25 @@ describe('pools', () => {
   it('refuses a pool created with a capacity other than 1', async () => {
     const response = await api.createResource({ ...poolBase, capacity: 3 })
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('validation_error')
+    expect(response.json<ErrorResponse>().error).toBe('validation_error')
   })
 
   it('lets a member leave its pool', async () => {
-    const pool = (await api.createResource(poolBase)).json()
-    const member = (await api.createResource({ ...memberBase, pool_id: pool.id })).json()
+    const pool = (await api.createResource(poolBase)).json<ResourceResponse>()
+    const member = (
+      await api.createResource({ ...memberBase, pool_id: pool.id })
+    ).json<ResourceResponse>()
     const patched = await api.patchResource(member.id, { pool_id: null })
     expect(patched.statusCode).toBe(200)
-    expect(patched.json().pool_id).toBeNull()
+    expect(patched.json<ResourceResponse>().pool_id).toBeNull()
   })
 
   it('refuses to delete a pool that still has members', async () => {
-    const pool = (await api.createResource(poolBase)).json()
+    const pool = (await api.createResource(poolBase)).json<ResourceResponse>()
     await api.createResource({ ...memberBase, pool_id: pool.id })
     const response = await api.deleteResource(pool.id)
     expect(response.statusCode).toBe(409)
-    expect(response.json().error).toBe('pool_has_members')
+    expect(response.json<ErrorResponse>().error).toBe('pool_has_members')
   })
 
   it.each([
@@ -217,21 +236,23 @@ describe('pools', () => {
         api.putException(id, { date: '2026-09-01', start_time: null, end_time: null }),
     },
   ])('refuses $name on a pool', async ({ call }) => {
-    const pool = (await api.createResource(poolBase)).json()
+    const pool = (await api.createResource(poolBase)).json<ResourceResponse>()
     const response = await call(pool.id)
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('validation_error')
-    expect(response.json().message).toMatch(/pool/i)
+    expect(response.json<ErrorResponse>().error).toBe('validation_error')
+    expect(response.json<ErrorResponse>().message).toMatch(/pool/i)
   })
 
   it('still serves a schedule read on a pool, as an empty list', async () => {
-    const pool = (await api.createResource(poolBase)).json()
-    expect((await api.getSchedule(pool.id)).json()).toEqual([])
+    const pool = (await api.createResource(poolBase)).json<ResourceResponse>()
+    expect((await api.getSchedule(pool.id)).json<ScheduleResponse>()).toEqual([])
   })
 
   it.each(poolAvailabilityCases)('$name', async (scenario) => {
     const pool = await aPoolWith(scenario.members)
-    const slots = (await api.getAvailability(pool.id, scenario.from, scenario.to)).json().slots
+    const slots = (
+      await api.getAvailability(pool.id, scenario.from, scenario.to)
+    ).json<AvailabilityResponse>().slots
     expect(slots.filter((s: Slot) => s.available).map((s: Slot) => s.start)).toEqual(
       scenario.availableStarts,
     )
@@ -259,7 +280,7 @@ describe('pools', () => {
         slot_duration: 'PT30M',
         concurrency_mode: 'pool',
       })
-    ).json()
+    ).json<ResourceResponse>()
     const member = (
       await api.createResource({
         timezone: warsawFallBack.zone,
@@ -267,7 +288,7 @@ describe('pools', () => {
         concurrency_mode: 'exclusive',
         pool_id: pool.id,
       })
-    ).json()
+    ).json<ResourceResponse>()
 
     // A window straddling the transition instant: local 01:00-04:00 covers the repeated
     // 02:00-03:00 hour, which real time walks through twice at two different offsets.
@@ -279,7 +300,7 @@ describe('pools', () => {
 
     const slots = (
       await api.getAvailability(pool.id, warsawFallBack.date, dayAfter(warsawFallBack.date))
-    ).json().slots as Slot[]
+    ).json<AvailabilityResponse>().slots as Slot[]
     const starts = slots.map((slot) => slot.start)
 
     // Not vacuous: the ambiguous hour really did produce slots at both offsets.
@@ -293,11 +314,13 @@ describe('pools', () => {
     const pool = await aPoolWith([{ windows: wholeWeek }, { windows: wholeWeek }])
     expect((await api.createBooking(pool.id, night)).statusCode).toBe(201)
     expect(
-      (await api.getAvailability(pool.id, '2026-07-20', '2026-07-21')).json().slots[0].available,
+      (await api.getAvailability(pool.id, '2026-07-20', '2026-07-21')).json<AvailabilityResponse>()
+        .slots[0]?.available,
     ).toBe(true)
     expect((await api.createBooking(pool.id, night)).statusCode).toBe(201)
     expect(
-      (await api.getAvailability(pool.id, '2026-07-20', '2026-07-21')).json().slots[0].available,
+      (await api.getAvailability(pool.id, '2026-07-20', '2026-07-21')).json<AvailabilityResponse>()
+        .slots[0]?.available,
     ).toBe(false)
   })
 
@@ -306,7 +329,7 @@ describe('pools', () => {
       const pool = await aPoolWith([{ windows: wholeWeek }])
       const response = await api.createBooking(pool.id, night)
       expect(response.statusCode).toBe(201)
-      expect(response.json().resource_id).toBe(pool.memberIds[0])
+      expect(response.json<BookingResponse>().resource_id).toBe(pool.memberIds[0])
     })
 
     /**
@@ -319,7 +342,7 @@ describe('pools', () => {
       const pool = await aPoolWith([{ windows: [] }])
       const response = await api.createBooking(pool.id, night)
       expect(response.statusCode).toBe(400)
-      expect(response.json().error).toBe('invalid_slot_boundary')
+      expect(response.json<ErrorResponse>().error).toBe('invalid_slot_boundary')
     })
 
     it('answers slot_unavailable when every member that offers it is taken', async () => {
@@ -327,7 +350,7 @@ describe('pools', () => {
       expect((await api.createBooking(pool.id, night)).statusCode).toBe(201)
       const second = await api.createBooking(pool.id, night)
       expect(second.statusCode).toBe(409)
-      expect(second.json().error).toBe('slot_unavailable')
+      expect(second.json<ErrorResponse>().error).toBe('slot_unavailable')
     })
 
     it('gives two concurrent bookings different members', async () => {
@@ -337,7 +360,7 @@ describe('pools', () => {
         api.createBooking(pool.id, night),
       ])
       expect([a.statusCode, b.statusCode].sort()).toEqual([201, 201])
-      expect(a.json().resource_id).not.toBe(b.json().resource_id)
+      expect(a.json<BookingResponse>().resource_id).not.toBe(b.json<BookingResponse>().resource_id)
     })
 
     it('gives the last free member to exactly one of two racing requests', async () => {
@@ -353,7 +376,7 @@ describe('pools', () => {
       const pool = await aPoolWith([{ windows: wholeWeek }])
       const held = (
         await api.createBooking(pool.id, { ...night, hold: true, hold_minutes: 10 })
-      ).json()
+      ).json<BookingResponse>()
       await expireHold(held.id)
       expect((await api.createBooking(pool.id, night)).statusCode).toBe(201)
     })
@@ -373,7 +396,7 @@ describe('pools', () => {
             slot_duration: 'PT1H',
             concurrency_mode: 'pool',
           })
-        ).json()
+        ).json<ResourceResponse>()
         const member = (
           await api.createResource({
             timezone: 'Europe/Warsaw',
@@ -381,7 +404,7 @@ describe('pools', () => {
             concurrency_mode: 'exclusive',
             pool_id: pool.id,
           })
-        ).json()
+        ).json<ResourceResponse>()
         await api.putSchedule(member.id, [aWindow(WEEKDAYS.monday, '09:00', '12:00')])
         return { id: pool.id }
       }
@@ -393,7 +416,7 @@ describe('pools', () => {
           end_time: '2026-07-20T10:30:00+02:00',
         })
         expect(response.statusCode).toBe(400)
-        expect(response.json().error).toBe('invalid_slot_boundary')
+        expect(response.json<ErrorResponse>().error).toBe('invalid_slot_boundary')
       })
 
       it('answers outside_schedule for a run starting on the grid but extending past the window', async () => {
@@ -403,7 +426,7 @@ describe('pools', () => {
           end_time: '2026-07-20T13:00:00+02:00',
         })
         expect(response.statusCode).toBe(400)
-        expect(response.json().error).toBe('outside_schedule')
+        expect(response.json<ErrorResponse>().error).toBe('outside_schedule')
       })
     })
   })
@@ -415,7 +438,7 @@ describe('pools', () => {
       const second = await api.createBooking(pool.id, { ...night, idempotency_key: 'k-1' })
       expect(first.statusCode).toBe(201)
       expect(second.statusCode).toBe(200)
-      expect(second.json().id).toBe(first.json().id)
+      expect(second.json<BookingResponse>().id).toBe(first.json<BookingResponse>().id)
     })
 
     it('does not create a second booking on another member when a key is replayed concurrently', async () => {
@@ -425,7 +448,7 @@ describe('pools', () => {
         api.createBooking(pool.id, { ...night, idempotency_key: 'k-2' }),
       ])
       expect([a.statusCode, b.statusCode].sort()).toEqual([200, 201])
-      expect(a.json().id).toBe(b.json().id)
+      expect(a.json<BookingResponse>().id).toBe(b.json<BookingResponse>().id)
     })
 
     it('refuses a replayed key describing a different booking', async () => {
@@ -437,7 +460,7 @@ describe('pools', () => {
         idempotency_key: 'k-3',
       })
       expect(other.statusCode).toBe(409)
-      expect(other.json().error).toBe('idempotency_key_reused')
+      expect(other.json<ErrorResponse>().error).toBe('idempotency_key_reused')
     })
   })
 
@@ -479,7 +502,7 @@ describe('pools', () => {
 
       const response = await pending[0]!
       expect(response.statusCode).toBe(409)
-      expect(response.json().error).toBe('resource_inactive')
+      expect(response.json<ErrorResponse>().error).toBe('resource_inactive')
 
       // Not just refused: nothing landed on a member of a retired pool.
       const rows = await getTestDb().selectFrom('bookings').select('id').execute()

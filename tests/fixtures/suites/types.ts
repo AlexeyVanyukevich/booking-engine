@@ -1,6 +1,7 @@
 import type { Api } from '../api.js'
 import type { ResourcePayload } from '../resources.js'
 import type { Transport } from '../transport.js'
+import type { ErrorResponse } from '../bodies.js'
 
 /**
  * A case the smoke run could not execute — not a pass and not a failure. Some states the
@@ -80,7 +81,8 @@ export interface SuiteContext {
 export interface Response {
   statusCode: number
   body: string
-  json: () => any
+  /** The parsed body, as the type the caller names; `unknown` until it names one. */
+  json: <T = unknown>() => T
 }
 
 export function expectStatus(response: Response, wanted: number): string | null {
@@ -93,12 +95,13 @@ export function expectError(response: Response, code: string): string | null {
   if (response.statusCode !== 400) {
     return `expected 400 ${code}, got ${response.statusCode}: ${response.body.slice(0, 200)}`
   }
-  const actual = response.json()?.error
+  const actual = response.json<ErrorResponse>()?.error
   return actual === code ? null : `expected error "${code}", got "${actual}"`
 }
 
 export function expectFields(response: Response, wanted: Record<string, unknown>): string | null {
-  const body = response.json()
+  // Fields named by the dataset, so the body is read as a record rather than a contract type.
+  const body = response.json<Record<string, unknown>>()
   for (const [field, value] of Object.entries(wanted)) {
     if (body[field] !== value) return `${field}: expected ${value}, got ${body[field]}`
   }
