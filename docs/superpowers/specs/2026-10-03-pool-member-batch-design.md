@@ -1,6 +1,6 @@
 # Pool booking and pool availability share one member-slot computation
 
-**Status:** draft · **Date:** 2026-10-03
+**Status:** implemented · **Date:** 2026-10-03
 
 **This is a decision record, not current truth.** It states what was decided on the date above and is not revised as the system changes. For what the engine does today, read [architecture.md](../../architecture.md) and [conventions.md](../../conventions.md) — where they disagree with this document, they are right.
 
@@ -66,6 +66,11 @@ dates `gridDatesFor` gives for the interval, and calls `memberSlots`. `checkAgai
 per member exactly as before, so `invalid_slot_boundary` and `outside_schedule` are decided by
 the same rule. A pool with no active member skips the queries — `in ()` is not valid SQL — and
 reaches the refusal it reaches today.
+
+_As built:_ the empty-pool skip was not needed. `listByResourceIds` and
+`listInRangeForResources` already return `[]` for an empty id list without querying, which a run
+with the skip removed showed; the service passes the list through, and a test pins the empty
+pool's `outside_schedule` either way.
 
 **One grid source.** Booking takes the grid from the pool row, as availability does, instead of
 each member's row. Rule 4 makes them equal; this makes them one source.

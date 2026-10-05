@@ -224,6 +224,12 @@ path, called from both, for the reason spec 2 gave for reusing the grid in booki
 anything offered is bookable, anything bookable was offered, and there is one implementation
 rather than two that can drift apart.
 
+_As built:_ until 2026-10-03 it was not. Booking narrowed members by calling the single-resource
+`offeredSlots` once per member, two queries each and in turn, and took the grid from each member
+rather than the pool; availability batched. The two agreed because rule 4 keeps every member on
+the pool's grid. Since then both call `memberSlots` (`src/modules/availability/member-slots.ts`)
+over two batched queries and the pool's grid, so the sentence above holds.
+
 Throughout, "an active booking" means one whose status is `held` or `confirmed` — the same set
 `bookings_no_overlap` and the capacity count already use.
 
