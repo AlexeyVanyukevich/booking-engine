@@ -64,3 +64,9 @@ export const poolAvailabilityCases: PoolAvailabilityCase[] = [
     availableStarts: [],
   },
 ]
+
+/**
+ * Pool sizes a booking's query count is compared across. A count that grew with the member
+ * count would differ between them.
+ */
+export const poolSizesForQueryCount = [1, 3, 8]
