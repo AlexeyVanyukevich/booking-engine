@@ -16,6 +16,7 @@ import {
 } from '../../shared/errors.js'
 import { formatTime, parseSlotDuration } from '../../shared/time.js'
 import { assertValidRange } from '../../shared/range.js'
+import { memberSlots } from '../availability/member-slots.js'
 import { generateSlots, type Slot } from '../availability/slot-generator.js'
 import { resolveWindows } from '../availability/window-resolver.js'
 import type { ExceptionRepository } from '../exceptions/exception.repository.js'
@@ -308,8 +309,14 @@ export class BookingService {
     const members = await this.pools.listMembers(tenantId, pool.id, true)
     const offering: ResourceRow[] = []
     const failures: BookingGridError[] = []
+    const slotsByMember = await this.poolMemberSlots(
+      pool,
+      members.map((member) => member.id),
+      body.start_time,
+      body.end_time,
+    )
     for (const member of members) {
-      const slots = await this.offeredSlots(member, body.start_time, body.end_time)
+      const slots = slotsByMember.get(member.id) ?? []
       const check = checkAgainstGrid(slots, body.start_time, body.end_time)
       if (check.ok) offering.push(member)
       else failures.push(check.error)
@@ -337,9 +344,8 @@ export class BookingService {
       }
 
       // From here on the decision is made on the pool row read inside the transaction, exactly
-      // as `create` does. The row this method opened with is older than the per-member scan
-      // above — N sequential round trips — so a PATCH retiring the pool, or a DELETE of an
-      // emptied one, commits inside a window that is not small.
+      // as `create` does. The row this method opened with is older than the member scan above,
+      // so a PATCH retiring the pool, or a DELETE of an emptied one, can commit in between.
       const current = this.stillThere(locked, pool.id)
       if (!current.is_active) {
         throw new ResourceInactiveError(`Resource ${pool.id} is not active and cannot be booked`, {
@@ -739,17 +745,60 @@ export class BookingService {
     return minutes
   }
 
+  /**
+   * Every member's slots over the dates the interval can touch: two queries whatever the member
+   * count, and the same computation availability runs, on the pool's one grid.
+   */
+  private async poolMemberSlots(
+    pool: ResourceRow,
+    memberIds: string[],
+    startIso: string,
+    endIso: string,
+  ): Promise<Map<string, Slot[]>> {
+    const { dates, first, afterLast } = this.gridRange(startIso, endIso, pool.timezone)
+
+    const [scheduleRows, exceptionRows] = await Promise.all([
+      this.schedule.listByResourceIds(pool.tenant_id, memberIds),
+      this.exceptions.listInRangeForResources(pool.tenant_id, memberIds, first, afterLast),
+    ])
+
+    return memberSlots({
+      memberIds,
+      dates,
+      grid: {
+        timezone: pool.timezone,
+        slotDuration: parseSlotDuration(pool.slot_duration),
+        anchorTime: formatTime(pool.slot_anchor_time),
+      },
+      scheduleRows,
+      exceptionRows,
+    })
+  }
+
+  /**
+   * The dates the interval can touch, and the half-open range of them an exception query takes:
+   * `to` is the day after the last date, which is what includes it.
+   */
+  private gridRange(
+    startIso: string,
+    endIso: string,
+    timezone: string,
+  ): { dates: string[]; first: string; afterLast: string } {
+    const dates = gridDatesFor(startIso, endIso, timezone)
+    const first = dates[0]!
+    const afterLast = DateTime.fromISO(dates[dates.length - 1]!, { zone: timezone })
+      .plus({ days: 1 })
+      .toISODate()!
+    return { dates, first, afterLast }
+  }
+
   /** The slots this resource offers over the dates the interval can touch. */
   private async offeredSlots(
     resource: ResourceRow,
     startIso: string,
     endIso: string,
   ): Promise<Slot[]> {
-    const dates = gridDatesFor(startIso, endIso, resource.timezone)
-    const first = dates[0]!
-    const afterLast = DateTime.fromISO(dates[dates.length - 1]!, { zone: resource.timezone })
-      .plus({ days: 1 })
-      .toISODate()!
+    const { dates, first, afterLast } = this.gridRange(startIso, endIso, resource.timezone)
 
     const [scheduleRows, exceptionRows] = await Promise.all([
       this.schedule.listByResource(resource.tenant_id, resource.id),

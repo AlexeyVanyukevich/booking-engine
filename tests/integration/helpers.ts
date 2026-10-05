@@ -40,7 +40,10 @@ export async function seedTenantId(name = 'test tenant'): Promise<string> {
   return row.id
 }
 
-export async function buildTestApp(overrides: Partial<AppConfig> = {}): Promise<FastifyInstance> {
+export async function buildTestApp(
+  overrides: Partial<AppConfig> = {},
+  db: Kysely<Database> = getTestDb(),
+): Promise<FastifyInstance> {
   const app = await buildApp({
     config: {
       port: 0,
@@ -56,7 +59,7 @@ export async function buildTestApp(overrides: Partial<AppConfig> = {}): Promise<
       rateLimitPerMinute: 100_000,
       ...overrides,
     },
-    db: getTestDb(),
+    db,
   })
   await app.ready()
   return app

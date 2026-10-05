@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Api } from '../fixtures/api.js'
+import { QueryCounter } from '../fixtures/query-counter.js'
 import {
   withAuthorization,
   injectTransport,
@@ -11,6 +12,7 @@ import {
 } from '../fixtures/datasets/pool-membership.js'
 import {
   poolAvailabilityCases,
+  poolSizesForQueryCount,
   wholeWeek,
   type PoolAvailabilityCase,
 } from '../fixtures/datasets/pool-availability.js'
@@ -33,10 +35,12 @@ import type {
 } from '../fixtures/bodies.js'
 
 let api: Api
+/** Every query the file's app executes passes through this; see the query-count case. */
+const counter = new QueryCounter()
 let close: () => Promise<void>
 
 beforeAll(async () => {
-  const app = await buildTestApp()
+  const app = await buildTestApp({}, getTestDb().withPlugin(counter))
   api = new Api(withAuthorization(injectTransport(app), testAuthorization))
   close = async () => {
     await app.close()
@@ -508,5 +512,26 @@ describe('pools', () => {
       const rows = await getTestDb().selectFrom('bookings').select('id').execute()
       expect(rows).toEqual([])
     })
+  })
+})
+
+describe('a pool booking', () => {
+  // No active member: the batched member queries receive an empty id list.
+  it('refuses a pool with no active member as outside its schedule', async () => {
+    const pool = await aPoolWith([{ windows: wholeWeek, active: false }])
+    const response = await api.createBooking(pool.id, night)
+    expect(response.statusCode).toBe(400)
+    expect(response.json<ErrorResponse>().error).toBe('outside_schedule')
+  })
+
+  it('issues the same number of queries however many members the pool has', async () => {
+    const counts: number[] = []
+    for (const size of poolSizesForQueryCount) {
+      const pool = await aPoolWith(Array.from({ length: size }, () => ({ windows: wholeWeek })))
+      counter.reset()
+      expect((await api.createBooking(pool.id, night)).statusCode).toBe(201)
+      counts.push(counter.count)
+    }
+    expect(counts).toEqual(counts.map(() => counts[0]))
   })
 })
