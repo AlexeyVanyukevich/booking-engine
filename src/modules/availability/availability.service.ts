@@ -8,6 +8,7 @@ import type { ResourceRow } from '../resources/resource.repository.js'
 import type { ResourceService } from '../resources/resource.service.js'
 import type { ScheduleRepository } from '../schedule/schedule.repository.js'
 import type { AvailabilityResponse } from './availability.schemas.js'
+import { memberSlots } from './member-slots.js'
 import { generateSlots, type Slot } from './slot-generator.js'
 import { resolveWindows } from './window-resolver.js'
 
@@ -117,20 +118,20 @@ export class AvailabilityService {
     // process waits out — for a result the same size either way.
     const everySlot = new Map<string, Slot>()
     const perMember: Array<{ member: ResourceRow; offered: Set<string> }> = []
-
-    for (const member of members) {
-      const slots = generateSlots({
-        dates,
-        windowsByDate: resolveWindows({
-          dates,
-          timezone: pool.timezone,
-          scheduleRows: scheduleRows.filter((row) => row.resource_id === member.id),
-          exceptionRows: exceptionRows.filter((row) => row.resource_id === member.id),
-        }),
+    const slotsByMember = memberSlots({
+      memberIds: ids,
+      dates,
+      grid: {
         timezone: pool.timezone,
         slotDuration: parseSlotDuration(pool.slot_duration),
         anchorTime: formatTime(pool.slot_anchor_time),
-      })
+      },
+      scheduleRows,
+      exceptionRows,
+    })
+
+    for (const member of members) {
+      const slots = slotsByMember.get(member.id) ?? []
 
       for (const slot of slots) everySlot.set(slot.start, slot)
       perMember.push({ member, offered: new Set(slots.map((slot) => slot.start)) })
