@@ -85,17 +85,6 @@ commit that fixes it.
 - Impact: none today. Whoever sets `ban` gets `429` where the plugin documents `403`, with no
   test to say so.
 
-## The `x-ratelimit-*` headers on a `429` are not asserted
-
-- Where: `tests/integration/rate-limit.test.ts`; the comment on `RateLimitedError` in
-  `src/shared/errors.ts`
-- Found: 2026-10-01, in the review of the rate-limit status fix
-- Problem: the comment says the plugin's `retry-after` and `x-ratelimit-*` headers survive
-  Fastify's error path. The test asserts `retry-after` on every `429`, but none of
-  `x-ratelimit-limit`, `-remaining` or `-reset`.
-- Impact: a consumer pacing itself from `x-ratelimit-remaining` would lose it without a failing
-  test. Low today, because nothing in the engine touches those headers.
-
 ## Requests the limiter never sees: rejected keys and unmatched paths
 
 - Where: `src/app.ts`, the `@fastify/rate-limit` registration; `src/shared/auth.ts`, the
