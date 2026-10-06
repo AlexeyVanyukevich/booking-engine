@@ -8,6 +8,7 @@ import type { Database } from '../../src/db/schema.js'
 import { TenantRepository } from '../../src/modules/tenants/tenant.repository.js'
 import { TenantService } from '../../src/modules/tenants/tenant.service.js'
 import { SCOPES } from '../../src/shared/scopes.js'
+import { recordContract } from './contract.js'
 
 let cached: Kysely<Database> | undefined
 
@@ -61,6 +62,8 @@ export async function buildTestApp(
     },
     db,
   })
+  // Before `ready()`: the route plugins load then, so a root hook added now reaches them all.
+  recordContract(app)
   await app.ready()
   return app
 }
