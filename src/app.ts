@@ -18,6 +18,7 @@ import { TenantRepository } from './modules/tenants/tenant.repository.js'
 import { TenantService } from './modules/tenants/tenant.service.js'
 import { registerAuth } from './shared/auth.js'
 import { RateLimitedError, registerErrorHandler } from './shared/errors.js'
+import { registerResponseRules } from './shared/responses.js'
 
 export interface AppDeps {
   config: AppConfig
@@ -100,6 +101,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   })
 
   registerAuth(app, new TenantService(new TenantRepository(deps.db)))
+  // Before the generator: it reads each route's response schema as this hook leaves it.
+  registerResponseRules(app)
 
   // Generated from the same TypeBox schemas the routes validate against, so the
   // documentation cannot drift from the behaviour. Registered before the route

@@ -1,10 +1,16 @@
 import { Type } from 'typebox'
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
 import { md } from '../../shared/docs.js'
+import {
+  InvalidRangeError,
+  NotFoundError,
+  ScheduleShapeMismatchError,
+} from '../../shared/errors.js'
+import { errorResponses } from '../../shared/responses.js'
 import { PoolRepository } from '../resources/pool.repository.js'
 import { PoolService } from '../resources/pool.service.js'
 import { ResourceRepository } from '../resources/resource.repository.js'
-import { ErrorResponse, ResourceParams } from '../resources/resource.schemas.js'
+import { ResourceParams } from '../resources/resource.schemas.js'
 import { ResourceService } from '../resources/resource.service.js'
 import { ExceptionRepository } from './exception.repository.js'
 import {
@@ -38,7 +44,10 @@ export const exceptionRoutes: FastifyPluginAsyncTypebox = async (app) => {
           'The range is half-open: `from` inclusive, `to` exclusive. Both are required, and the span is capped at `MAX_RANGE_DAYS`.',
         params: ResourceParams,
         querystring: ExceptionRangeQuery,
-        response: { 200: ExceptionListResponse, 400: ErrorResponse, 404: ErrorResponse },
+        response: {
+          200: ExceptionListResponse,
+          ...errorResponses(InvalidRangeError, NotFoundError),
+        },
       },
     },
     async (request) =>
@@ -59,7 +68,10 @@ export const exceptionRoutes: FastifyPluginAsyncTypebox = async (app) => {
         ),
         params: ExceptionParams,
         body: PutExceptionBody,
-        response: { 200: ExceptionResponse, 400: ErrorResponse, 404: ErrorResponse },
+        response: {
+          200: ExceptionResponse,
+          ...errorResponses(ScheduleShapeMismatchError, NotFoundError),
+        },
       },
     },
     async (request) =>
@@ -76,7 +88,7 @@ export const exceptionRoutes: FastifyPluginAsyncTypebox = async (app) => {
         description:
           'Idempotent: a date with no exception also returns 204, matching the idempotent PUT.',
         params: ExceptionParams,
-        response: { 204: Type.Null(), 404: ErrorResponse },
+        response: { 204: Type.Null(), ...errorResponses(NotFoundError) },
       },
     },
     async (request, reply) => {

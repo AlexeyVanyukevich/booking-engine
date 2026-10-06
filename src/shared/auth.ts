@@ -35,7 +35,7 @@ export interface RouteAuthorization {
 const BEARER = /^Bearer (.+)$/
 
 /** Swagger UI registers its own routes and cannot carry our config. */
-function isDocsRoute(url: string): boolean {
+export function isDocsRoute(url: string): boolean {
   return url === '/docs' || url.startsWith('/docs/')
 }
 

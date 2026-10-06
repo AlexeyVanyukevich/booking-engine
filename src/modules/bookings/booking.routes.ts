@@ -1,10 +1,25 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
 import { md } from '../../shared/docs.js'
+import {
+  ConcurrentUpdateError,
+  HoldExpiredError,
+  IdempotencyKeyReusedError,
+  InvalidIntervalError,
+  InvalidRangeError,
+  InvalidSlotBoundaryError,
+  InvalidStateTransitionError,
+  NotFoundError,
+  OutsideScheduleError,
+  ResourceInactiveError,
+  SlotUnavailableError,
+  UnsupportedConcurrencyModeError,
+} from '../../shared/errors.js'
+import { errorResponses } from '../../shared/responses.js'
 import { ExceptionRepository } from '../exceptions/exception.repository.js'
 import { PoolRepository } from '../resources/pool.repository.js'
 import { PoolService } from '../resources/pool.service.js'
 import { ResourceRepository } from '../resources/resource.repository.js'
-import { ErrorResponse, ResourceParams } from '../resources/resource.schemas.js'
+import { ResourceParams } from '../resources/resource.schemas.js'
 import { ResourceService } from '../resources/resource.service.js'
 import { ScheduleRepository } from '../schedule/schedule.repository.js'
 import { BookingRepository } from './booking.repository.js'
@@ -60,10 +75,17 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         response: {
           200: BookingResponse,
           201: BookingResponse,
-          400: ErrorResponse,
-          404: ErrorResponse,
-          409: ErrorResponse,
-          503: ErrorResponse,
+          ...errorResponses(
+            InvalidIntervalError,
+            InvalidSlotBoundaryError,
+            OutsideScheduleError,
+            UnsupportedConcurrencyModeError,
+            NotFoundError,
+            ResourceInactiveError,
+            SlotUnavailableError,
+            IdempotencyKeyReusedError,
+            ConcurrentUpdateError,
+          ),
         },
       },
     },
@@ -81,7 +103,7 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         tags: ['Bookings'],
         summary: 'Read a booking',
         params: BookingParams,
-        response: { 200: BookingResponse, 404: ErrorResponse },
+        response: { 200: BookingResponse, ...errorResponses(NotFoundError) },
       },
     },
     async (request) => service.getById(request.tenantId, request.params.id),
@@ -101,10 +123,12 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         params: BookingParams,
         response: {
           200: BookingResponse,
-          404: ErrorResponse,
-          409: ErrorResponse,
-          410: ErrorResponse,
-          503: ErrorResponse,
+          ...errorResponses(
+            NotFoundError,
+            InvalidStateTransitionError,
+            HoldExpiredError,
+            ConcurrentUpdateError,
+          ),
         },
       },
     },
@@ -123,9 +147,7 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         params: BookingParams,
         response: {
           200: BookingResponse,
-          404: ErrorResponse,
-          409: ErrorResponse,
-          503: ErrorResponse,
+          ...errorResponses(NotFoundError, InvalidStateTransitionError, ConcurrentUpdateError),
         },
       },
     },
@@ -144,9 +166,7 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         params: BookingParams,
         response: {
           200: BookingResponse,
-          404: ErrorResponse,
-          409: ErrorResponse,
-          503: ErrorResponse,
+          ...errorResponses(NotFoundError, InvalidStateTransitionError, ConcurrentUpdateError),
         },
       },
     },
@@ -164,9 +184,7 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         params: BookingParams,
         response: {
           200: BookingResponse,
-          404: ErrorResponse,
-          409: ErrorResponse,
-          503: ErrorResponse,
+          ...errorResponses(NotFoundError, InvalidStateTransitionError, ConcurrentUpdateError),
         },
       },
     },
@@ -188,10 +206,17 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         body: RescheduleBookingBody,
         response: {
           200: BookingResponse,
-          400: ErrorResponse,
-          404: ErrorResponse,
-          409: ErrorResponse,
-          503: ErrorResponse,
+          ...errorResponses(
+            InvalidIntervalError,
+            InvalidSlotBoundaryError,
+            OutsideScheduleError,
+            UnsupportedConcurrencyModeError,
+            NotFoundError,
+            InvalidStateTransitionError,
+            ResourceInactiveError,
+            SlotUnavailableError,
+            ConcurrentUpdateError,
+          ),
         },
       },
     },
@@ -211,7 +236,10 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
         ),
         params: ResourceParams,
         querystring: ResourceBookingsQuery,
-        response: { 200: BookingListResponse, 400: ErrorResponse, 404: ErrorResponse },
+        response: {
+          200: BookingListResponse,
+          ...errorResponses(InvalidRangeError, NotFoundError),
+        },
       },
     },
     async (request) => service.listForResource(request.tenantId, request.params.id, request.query),
@@ -229,7 +257,7 @@ export const bookingRoutes: FastifyPluginAsyncTypebox = async (app) => {
           '**The window is interpreted in UTC here**, not in a resource timezone — the results span resources in different zones and none of them outranks the others. Each returned timestamp is still rendered in its own resource zone.',
         ),
         querystring: CustomerBookingsQuery,
-        response: { 200: BookingListResponse, 400: ErrorResponse },
+        response: { 200: BookingListResponse, ...errorResponses(InvalidRangeError) },
       },
     },
     async (request) => service.listForCustomer(request.tenantId, request.query),

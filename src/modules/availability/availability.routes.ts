@@ -1,11 +1,13 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
 import { md } from '../../shared/docs.js'
+import { InvalidRangeError, NotFoundError } from '../../shared/errors.js'
+import { errorResponses } from '../../shared/responses.js'
 import { BookingRepository } from '../bookings/booking.repository.js'
 import { ExceptionRepository } from '../exceptions/exception.repository.js'
 import { PoolRepository } from '../resources/pool.repository.js'
 import { PoolService } from '../resources/pool.service.js'
 import { ResourceRepository } from '../resources/resource.repository.js'
-import { ErrorResponse, ResourceParams } from '../resources/resource.schemas.js'
+import { ResourceParams } from '../resources/resource.schemas.js'
 import { ResourceService } from '../resources/resource.service.js'
 import { ScheduleRepository } from '../schedule/schedule.repository.js'
 import { AvailabilityQuery, AvailabilityResponse } from './availability.schemas.js'
@@ -45,7 +47,10 @@ export const availabilityRoutes: FastifyPluginAsyncTypebox = async (app) => {
         ),
         params: ResourceParams,
         querystring: AvailabilityQuery,
-        response: { 200: AvailabilityResponse, 400: ErrorResponse, 404: ErrorResponse },
+        response: {
+          200: AvailabilityResponse,
+          ...errorResponses(InvalidRangeError, NotFoundError),
+        },
       },
     },
     async (request) =>
