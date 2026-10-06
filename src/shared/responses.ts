@@ -1,4 +1,6 @@
+import type { FastifyInstance } from 'fastify'
 import { Type, type TSchema } from 'typebox'
+import { isDocsRoute } from './auth.js'
 import { md } from './docs.js'
 import * as errors from './errors.js'
 import type { AppError, ErrorExample } from './errors.js'
@@ -208,4 +210,28 @@ export function withSharedResponses(
     result[rule.status] = errorResponse([...new Set([...codes, rule.code])].map(lookup))
   }
   return result
+}
+
+/**
+ * Merges the shared rules into every documented route's real response schema, so a reply is
+ * serialized against what the document shows. Registered before `@fastify/swagger`, whose own
+ * `onRoute` hook reads the schema as it stands then.
+ */
+export function registerResponseRules(app: FastifyInstance): void {
+  app.addHook('onRoute', (route) => {
+    const schema = route.schema
+    if (isDocsRoute(route.url) || schema === undefined || schema.hide === true) return
+    const methods = [route.method].flat()
+    schema.response = withSharedResponses(
+      schema.response as Record<string, unknown> | undefined,
+      {
+        methods,
+        isPublic: route.config?.public === true,
+        validates: [schema.params, schema.querystring, schema.body].some(
+          (part) => part !== undefined,
+        ),
+      },
+      `${methods.join(',')} ${route.url}`,
+    )
+  })
 }

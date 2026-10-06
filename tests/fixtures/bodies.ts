@@ -15,10 +15,10 @@ import type {
   ExceptionResponse,
 } from '../../src/modules/exceptions/exception.schemas.js'
 import type {
-  ErrorResponse as ErrorSchema,
   ResourceListResponse as ResourceListSchema,
   ResourceResponse,
 } from '../../src/modules/resources/resource.schemas.js'
+import type { ErrorBody as ErrorSchema } from '../../src/shared/responses.js'
 import type {
   ScheduleResponse as ScheduleSchema,
   ScheduleRuleResponse,

@@ -1,9 +1,15 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
 import { md } from '../../shared/docs.js'
+import {
+  NotFoundError,
+  ScheduleOverlapError,
+  ScheduleShapeMismatchError,
+} from '../../shared/errors.js'
+import { errorResponses } from '../../shared/responses.js'
 import { PoolRepository } from '../resources/pool.repository.js'
 import { PoolService } from '../resources/pool.service.js'
 import { ResourceRepository } from '../resources/resource.repository.js'
-import { ErrorResponse, ResourceParams } from '../resources/resource.schemas.js'
+import { ResourceParams } from '../resources/resource.schemas.js'
 import { ResourceService } from '../resources/resource.service.js'
 import { ScheduleRepository } from './schedule.repository.js'
 import { ReplaceScheduleBody, ScheduleResponse } from './schedule.schemas.js'
@@ -28,7 +34,7 @@ export const scheduleRoutes: FastifyPluginAsyncTypebox = async (app) => {
         summary: 'Read the weekly schedule',
         description: 'Rules ordered by weekday, then by start time.',
         params: ResourceParams,
-        response: { 200: ScheduleResponse, 404: ErrorResponse },
+        response: { 200: ScheduleResponse, ...errorResponses(NotFoundError) },
       },
     },
     async (request) => service.list(request.tenantId, request.params.id),
@@ -53,7 +59,10 @@ export const scheduleRoutes: FastifyPluginAsyncTypebox = async (app) => {
         ),
         params: ResourceParams,
         body: ReplaceScheduleBody,
-        response: { 200: ScheduleResponse, 400: ErrorResponse, 404: ErrorResponse },
+        response: {
+          200: ScheduleResponse,
+          ...errorResponses(ScheduleShapeMismatchError, ScheduleOverlapError, NotFoundError),
+        },
       },
     },
     async (request) => service.replace(request.tenantId, request.params.id, request.body),

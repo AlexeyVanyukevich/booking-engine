@@ -71,6 +71,58 @@ describe('OpenAPI document', () => {
     expect(documented.sort()).toEqual(known.sort())
   })
 
+  interface DocumentedError {
+    description: string
+    headers?: Record<string, unknown>
+    content: {
+      'application/json': {
+        schema: { properties: { error: { enum?: string[] } } }
+        examples?: Record<string, { value: { error: string } }>
+      }
+    }
+  }
+
+  const errorResponsesOf = (method: string, path: string) =>
+    Object.entries(
+      document.paths[path]![method]!.responses as Record<string, DocumentedError>,
+    ).filter(([status]) => Number(status) >= 400)
+
+  it.each(ROUTES)('narrows every error code of %s %s and gives each an example', (method, path) => {
+    for (const [status, response] of errorResponsesOf(method, path)) {
+      const media = response.content['application/json']
+      const codes = media.schema.properties.error.enum
+      expect(codes, `${status} has no enum`).toBeDefined()
+      expect(Object.keys(media.examples ?? {}), `${status} examples`).toEqual(codes)
+      expect(response.description, `${status} description`).not.toBe('Default Response')
+    }
+  })
+
+  it.each(ROUTES)('declares 429 and 500 on %s %s', (method, path) => {
+    const statuses = errorResponsesOf(method, path).map(([status]) => status)
+    expect(statuses).toEqual(expect.arrayContaining(['429', '500']))
+  })
+
+  it('documents the rate-limit headers on a 429', () => {
+    const [, tooMany] = errorResponsesOf('get', '/resources').find(([status]) => status === '429')!
+    expect(Object.keys(tooMany.headers ?? {}).sort()).toEqual([
+      'retry-after',
+      'x-ratelimit-limit',
+      'x-ratelimit-remaining',
+      'x-ratelimit-reset',
+    ])
+  })
+
+  it('lists the codes a booking can lose its slot with', () => {
+    const [, conflict] = errorResponsesOf('post', '/resources/{id}/bookings').find(
+      ([status]) => status === '409',
+    )!
+    expect(conflict.content['application/json'].schema.properties.error.enum).toEqual([
+      'resource_inactive',
+      'slot_unavailable',
+      'idempotency_key_reused',
+    ])
+  })
+
   it.each(ROUTES)('gives %s %s a tag and a summary', (method, path) => {
     const operation = document.paths[path]![method]!
     expect(operation.tags).toBeDefined()

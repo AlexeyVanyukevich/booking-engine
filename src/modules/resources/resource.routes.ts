@@ -1,12 +1,19 @@
 import { Type } from 'typebox'
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
 import { md } from '../../shared/docs.js'
+import {
+  ConcurrentUpdateError,
+  InvalidPoolMembershipError,
+  NotFoundError,
+  PoolHasMembersError,
+  ResourceHasBookingsError,
+} from '../../shared/errors.js'
+import { errorResponses } from '../../shared/responses.js'
 import { PoolRepository } from './pool.repository.js'
 import { PoolService } from './pool.service.js'
 import { ResourceRepository } from './resource.repository.js'
 import {
   CreateResourceBody,
-  ErrorResponse,
   ResourceListQuery,
   ResourceListResponse,
   ResourceParams,
@@ -36,7 +43,7 @@ export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
           '`concurrency_mode: "pool"` is not implemented yet and is rejected.',
         ),
         body: CreateResourceBody,
-        response: { 201: ResourceResponse, 400: ErrorResponse },
+        response: { 201: ResourceResponse, ...errorResponses(InvalidPoolMembershipError) },
       },
     },
     async (request, reply) =>
@@ -55,7 +62,7 @@ export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
           'A caller that keeps its own records already knows its ids, so this is not how it finds them. It exists for the console and for reconciling the two sets when they disagree.',
         ),
         querystring: ResourceListQuery,
-        response: { 200: ResourceListResponse, 400: ErrorResponse },
+        response: { 200: ResourceListResponse },
       },
     },
     async (request) => service.list(request.tenantId, request.query),
@@ -69,7 +76,7 @@ export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
         tags: ['Resources'],
         summary: 'Read a resource',
         params: ResourceParams,
-        response: { 200: ResourceResponse, 404: ErrorResponse },
+        response: { 200: ResourceResponse, ...errorResponses(NotFoundError) },
       },
     },
     async (request) => service.getById(request.tenantId, request.params.id),
@@ -89,7 +96,10 @@ export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
         ),
         params: ResourceParams,
         body: UpdateResourceBody,
-        response: { 200: ResourceResponse, 400: ErrorResponse, 404: ErrorResponse },
+        response: {
+          200: ResourceResponse,
+          ...errorResponses(InvalidPoolMembershipError, NotFoundError),
+        },
       },
     },
     async (request) => service.update(request.tenantId, request.params.id, request.body),
@@ -109,9 +119,12 @@ export const resourceRoutes: FastifyPluginAsyncTypebox = async (app) => {
         params: ResourceParams,
         response: {
           204: Type.Null(),
-          404: ErrorResponse,
-          409: ErrorResponse,
-          503: ErrorResponse,
+          ...errorResponses(
+            NotFoundError,
+            ResourceHasBookingsError,
+            PoolHasMembersError,
+            ConcurrentUpdateError,
+          ),
         },
       },
     },

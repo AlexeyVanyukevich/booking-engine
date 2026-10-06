@@ -144,23 +144,3 @@ export const ResourceListQuery = Type.Object(
 export type ResourceListQuery = Static<typeof ResourceListQuery>
 
 export const ResourceListResponse = Type.Array(ResourceResponse)
-
-export const ErrorResponse = Type.Object(
-  {
-    error: Type.String({
-      description: 'Stable machine-readable code — branch on this, not on the message.',
-      examples: ['validation_error'],
-    }),
-    message: Type.String({ description: 'Human-readable explanation. May change.' }),
-    details: Type.Optional(Type.Unknown({ description: 'Context, when there is any.' })),
-  },
-  {
-    examples: [
-      {
-        error: 'schedule_overlap',
-        message: 'Schedule rules on the same weekday must not overlap',
-        details: { day_of_week: 0 },
-      },
-    ],
-  },
-)
