@@ -88,26 +88,40 @@ describe('the error table in conventions.md', () => {
    * `FALLBACK_CLIENT_ERROR_CODE` is absent on purpose — it has no fixed status, so it is
    * documented in prose instead, which the last case here asserts.
    */
-  function emitted(): Set<string> {
-    const pairs = new Set<string>()
+  function emitted(): Map<string, { status: number; meaning: string }> {
+    const codes = new Map<string, { status: number; meaning: string }>()
 
     for (const exported of Object.values(errors)) {
       if (typeof exported !== 'function') continue
       if (!(exported.prototype instanceof errors.AppError)) continue
       const instance = new (exported as new (message: string) => errors.AppError)('probe')
-      pairs.add(`${instance.code} ${instance.statusCode}`)
+      codes.set(instance.code, { status: instance.statusCode, meaning: instance.meaning })
     }
 
-    for (const [status, code] of Object.entries(errors.CLIENT_ERROR_CODES)) {
-      pairs.add(`${code} ${status}`)
+    for (const [status, description] of Object.entries(errors.CLIENT_ERRORS)) {
+      codes.set(description.code, { status: Number(status), meaning: description.meaning })
     }
 
-    pairs.add(`${errors.INTERNAL_ERROR_CODE} 500`)
-    return pairs
+    codes.set(errors.INTERNAL_ERROR.code, { status: 500, meaning: errors.INTERNAL_ERROR.meaning })
+    return codes
   }
 
+  const pairs = (codes: Map<string, { status: number }>) =>
+    [...codes].map(([code, { status }]) => `${code} ${status}`)
+
   it('documents every code the engine can emit, at the status it emits it', () => {
-    expect([...documented].sort()).toEqual([...emitted()].sort())
+    expect([...documented].sort()).toEqual(pairs(emitted()).sort())
+  })
+
+  /**
+   * The meaning is stated once, on the class, and read from there by the OpenAPI document; this
+   * column is the copy, so it is held equal rather than proof-read.
+   */
+  it('gives every code the meaning the code states', () => {
+    const meanings = new Map(table.rows.map((row) => [unwrap(row[0]!), row[2]!]))
+    for (const [code, { meaning }] of emitted()) {
+      expect(meanings.get(code), code).toBe(meaning)
+    }
   })
 
   it('explains the fallback code, which has no status of its own', () => {
@@ -126,7 +140,7 @@ describe('the error table in conventions.md', () => {
     const shared = tableWithHeader(KIT_HTTP_RULE, 'Code', 'Status', 'Meaning').rows.map((row) =>
       unwrap(row[0]!),
     )
-    const emittedCodes = new Set([...emitted()].map((pair) => pair.split(' ')[0]!))
+    const emittedCodes = new Set(emitted().keys())
     emittedCodes.add(errors.FALLBACK_CLIENT_ERROR_CODE)
 
     const departures = tableWithHeader(CONVENTIONS, 'Shared code', 'Shared status', 'This engine')
