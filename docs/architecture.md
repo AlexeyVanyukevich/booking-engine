@@ -307,7 +307,7 @@ Why not `duration % slot_duration == 0`, as an earlier draft of this document ha
 
 ## API Contracts
 
-Every path, parameter, request field, response field and status code is generated from the same TypeBox schemas the routes validate against. It lives in [openapi.json](../openapi.json), committed at the repository root and rendered at `/docs`.
+Every path, parameter, request field, response field and status code is generated from the same TypeBox schemas the routes validate against. Error statuses are built from the error classes, the ones every route shares come from one rule table, and two tests hold every status to what the routes actually answer — see the conventions, _Documentation is generated, never written twice_. It lives in [openapi.json](../openapi.json), committed at the repository root and rendered at `/docs`.
 
 **It is deliberately not restated here.** A second description of the API is a copy, and a copy drifts — this section used to hold one, and it did. `tests/integration/openapi.test.ts` asserts the generated document against the running routes, which is a guarantee no prose can offer.
 
