@@ -244,6 +244,26 @@ Every route therefore carries `tags`, `summary` and a `response` map in its sche
 asserts this for all of them, and fails if a route is added without them or documented
 without existing.
 
+Error responses are not written route by route. Every code carries its meaning and an example
+on its class in `src/shared/errors.ts`, and `src/shared/responses.ts` builds each error
+response from them: `error` narrowed with `enum` to exactly that status's codes, a description
+naming each, one example per code, and the headers it carries. A route lists the classes it
+throws with `errorResponses(...)`. The statuses many routes share — `401` and `403` on every
+route that is not public, `429` and `500` on every route, `413` and `415` on every method
+Fastify parses a body for, `400` wherever a route validates or takes a body — come from one
+rule table, `SHARED_RULES`, merged into every route's real schema by an `onRoute` hook before
+the generator reads it. The table is not restated here; `openapi.json` shows its result.
+
+`enum`, never a union of literals: the serializer ignores `enum`, but it validates an `anyOf`
+and would turn a correct answer carrying an unlisted code into a `500`.
+
+Two tests keep the statuses true. Every integration test's replies pass a recorder,
+`tests/integration/contract.ts`, which fails the test when its route does not declare the
+status, the code or a header the reply carries. And `shared-responses.test.ts` triggers each
+shared rule on every route, asserting the route answers it where the rule applies and neither
+answers nor declares it where it does not. A code a route declares but no test draws is the
+one gap — see `docs/backlog.md`.
+
 The document is also committed, as `openapi.json` at the repository root, and written only by
 `./run openapi`. A consumer generating its types then needs no running engine, and a contract
 change is visible in the diff of the pull request that makes it rather than in a consumer's
@@ -272,7 +292,8 @@ away without losing the prose they sit in: the configuration table below, the er
 the scope table above, and the endpoint table in the README.
 
 `tests/unit/documented-tables.test.ts` reads them out of the Markdown and diffs them against
-`loadAppConfig`, the `AppError` subclasses together with `CLIENT_ERROR_CODES`, the scopes the
+`loadAppConfig`, the `AppError` subclasses together with `CLIENT_ERRORS` — codes, statuses and
+the Meaning column — the scopes the
 routes actually require, and `openapi.json`. A variable added without a row, a row whose
 default no longer matches, an error code nothing documents, a scope nothing requires, an
 endpoint added without a line — each fails the suite instead of waiting to be noticed. Two of

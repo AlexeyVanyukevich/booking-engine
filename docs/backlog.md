@@ -4,6 +4,38 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## A declared error code that no test draws is not detected
+
+- Where: `tests/integration/contract.ts`; every `errorResponses(...)` in `src/modules/*/*.routes.ts`
+- Found: 2026-10-06, while making `openapi.json` declare every status
+- Problem: the recorder fails a reply its route does not declare, and the shared-status
+  dataset proves the shared rules in both directions. Nothing proves the other direction for a
+  route's own codes: a class left in `errorResponses(...)` after the route stopped throwing it
+  stays in the document. Add `HoldExpiredError` to `GET /bookings/:id`, run `./run openapi`,
+  and every check passes.
+- Impact: the document may promise a code that can no longer occur — a consumer handles a case
+  that never comes. Each file sees only its own replies; collecting them across Vitest's workers
+  in a global teardown would close it.
+
+## `POST /resources` says the `pool` mode is rejected; it is not
+
+- Where: `src/modules/resources/resource.routes.ts`, the `POST /resources` description
+- Found: 2026-10-06, while declaring each route's error codes
+- Problem: the description ends "`concurrency_mode: "pool"` is not implemented yet and is
+  rejected." Spec 3 implemented it, and `pool` is accepted. Read `POST /resources` at `/docs`,
+  then create a resource with `concurrency_mode: "pool"`: it answers `201`.
+- Impact: a consumer reading the reference believes pools do not exist.
+
+## `method_not_allowed` is documented, but a wrong method answers `404`
+
+- Where: `src/shared/errors.ts`, `CLIENT_ERRORS[405]`; the error table in `docs/conventions.md`
+- Found: 2026-10-06, while deciding which statuses every route shares
+- Problem: the table says `405 method_not_allowed` means "the framework matched the path but
+  not the method". Fastify answers a known path with an unserved method as an unmatched route:
+  `tests/integration/error-handler.test.ts` sends `DELETE /health` and gets `404 not_found`.
+- Impact: a consumer branching on `method_not_allowed` waits for a code that never comes. The
+  row and the translation are dead unless the not-found handler tells the two apart.
+
 ## Casts written for untyped bodies outlived them
 
 - Where: `tests/integration/availability.test.ts` (`slots as Slot[]`, three times),
