@@ -259,7 +259,8 @@ and would turn a correct answer carrying an unlisted code into a `500`.
 
 Two tests keep the statuses true. Every integration test's replies pass a recorder,
 `tests/integration/contract.ts`, which fails the test when its route does not declare the
-status, the code or a header the reply carries. And `shared-responses.test.ts` triggers each
+reply's status or code, or when the reply lacks a header its route declares. A header the reply
+carries and the route does not declare is not checked. And `shared-responses.test.ts` triggers each
 shared rule on every route, asserting the route answers it where the rule applies and neither
 answers nor declares it where it does not. A code a route declares but no test draws is the
 one gap — see `docs/backlog.md`.

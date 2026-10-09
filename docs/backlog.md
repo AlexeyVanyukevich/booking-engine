@@ -4,6 +4,37 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## The rate-limit headers on a success are sent but not documented
+
+- Where: `src/shared/responses.ts`, `PLUGIN_HEADERS`; every 2xx in `openapi.json`
+- Found: 2026-10-09, in the review of the shared-status slice
+- Problem: `@fastify/rate-limit` sets `x-ratelimit-limit`, `-remaining` and `-reset` on every
+  reply, but the document declares them only on `429`. Send `GET /health` and read the
+  headers; then look for them under its `200` in `openapi.json`.
+- Impact: a consumer pacing itself from `x-ratelimit-remaining` before it is refused learns of
+  the header only by observing it. The recorder does not notice, because it checks only the
+  headers a route declares, never the ones a reply carries.
+
+## The error catalogue lets a duplicate code overwrite the class's entry
+
+- Where: `src/shared/responses.ts`, `catalogue()`
+- Found: 2026-10-09, in the review of the shared-status slice
+- Problem: `validation_error` and `not_found` enter the catalogue twice, from their classes and
+  from `CLIENT_ERRORS`, and the second entry wins. The `CLIENT_ERRORS` entry always carries no
+  headers, so a header later given to `ValidationError` or `NotFoundError` would vanish from
+  every merged `400` or `404`. Give `ValidationError` a `headers` field, run `./run openapi`:
+  the shared `400`s do not declare it.
+- Impact: none today, since neither class sets a header. Skipping a code already present, or
+  throwing on a mismatching duplicate, would make it impossible.
+
+## Every error response's description appears twice in `openapi.json`
+
+- Where: `src/shared/responses.ts`, `errorResponse()`
+- Found: 2026-10-09, in the review of the shared-status slice
+- Problem: the description is set on the schema, and `@fastify/swagger` copies it to the
+  response while leaving it on the schema too. Open any `409` in `openapi.json`.
+- Impact: cosmetic, and a larger document. Swagger UI shows the response description once.
+
 ## A declared error code that no test draws is not detected
 
 - Where: `tests/integration/contract.ts`; every `errorResponses(...)` in `src/modules/*/*.routes.ts`
