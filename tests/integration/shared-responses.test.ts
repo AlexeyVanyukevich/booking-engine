@@ -199,9 +199,8 @@ describe('statuses every route shares', () => {
     '$name: neither answered nor declared',
     async ({ route, trigger }) => {
       const declared = paths[route.path]![route.method]!.responses[String(trigger.status)]
-      expect(
-        declared?.content?.['application/json']?.schema?.properties?.error?.enum ?? [],
-      ).not.toContain(trigger.code)
+      // Absent, not merely without this code: a status the rule withholds is no status of the route.
+      expect(declared, `declares ${trigger.status}`).toBeUndefined()
       const response = await send(trigger, route)
       expect(response.statusCode).not.toBe(trigger.status)
     },
