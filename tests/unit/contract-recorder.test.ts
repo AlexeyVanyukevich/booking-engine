@@ -3,22 +3,32 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { recordContract, takeContractMismatches } from '../integration/contract.js'
 import { recorderCases, type RecorderCase } from '../fixtures/datasets/contract-recorder.js'
 
+function headersOf(declared: Record<string, boolean> | undefined) {
+  if (declared === undefined) return {}
+  return {
+    headers: Object.fromEntries(
+      Object.entries(declared).map(([name, required]) => [
+        name,
+        { type: 'string', ...(required ? { required: true } : {}) },
+      ]),
+    ),
+  }
+}
+
 function responseMap({ declares, declaredHeaders }: RecorderCase) {
   return Object.fromEntries(
     Object.entries(declares).map(([status, codes]) => [
       status,
       codes === null
-        ? { type: 'object', additionalProperties: true }
+        ? {
+            type: 'object',
+            additionalProperties: true,
+            ...headersOf(declaredHeaders?.[Number(status)]),
+          }
         : {
             type: 'object',
             properties: { error: { type: 'string', enum: codes }, message: { type: 'string' } },
-            ...(declaredHeaders?.[Number(status)]
-              ? {
-                  headers: Object.fromEntries(
-                    declaredHeaders[Number(status)]!.map((h) => [h, { type: 'string' }]),
-                  ),
-                }
-              : {}),
+            ...headersOf(declaredHeaders?.[Number(status)]),
           },
     ]),
   )

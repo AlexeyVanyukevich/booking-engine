@@ -19,6 +19,7 @@ export interface ErrorEntry {
   code: string
   meaning: string
   example: ErrorExample
+  /** Headers this code's replies always carry on their own, apart from the limiter's three. */
   headers: readonly string[]
 }
 
@@ -36,14 +37,21 @@ export const ErrorBody = Type.Object({
 })
 
 /**
- * Headers a code carries that its class does not set: the rate-limit plugin writes these on the
- * reply before it throws, and Fastify's error path keeps them.
+ * Headers a code carries that its class does not set: the rate-limit plugin writes `retry-after`
+ * on the reply before it throws, and Fastify's error path keeps it. The limiter's other three
+ * are not here: they are on every reply it counted, not on one code — see `LIMITER_REACH`.
  */
 const PLUGIN_HEADERS: Record<string, readonly string[]> = {
-  rate_limited: ['retry-after', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset'],
+  rate_limited: ['retry-after'],
 }
 
-const HEADER_DOCS: Record<string, { type: 'integer' | 'string'; description: string }> = {
+interface HeaderDoc {
+  type: 'integer' | 'string'
+  description: string
+}
+
+/** Every header the document describes. The recorder fails a reply carrying one undeclared. */
+export const HEADER_DOCS: Record<string, HeaderDoc> = {
   'www-authenticate': {
     type: 'string',
     description: 'Always `Bearer`, the scheme the key is sent in',
@@ -59,6 +67,59 @@ const HEADER_DOCS: Record<string, { type: 'integer' | 'string'; description: str
     description: "Seconds until the current minute's count resets",
   },
 }
+
+/** The three headers `@fastify/rate-limit` writes on every request it counts. */
+const LIMITER_HEADERS = ['x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset']
+
+/**
+ * Where a code is answered relative to the limiter. Authentication is an application-level
+ * `onRequest` hook and the limiter a route-level one, which Fastify runs after it, so what
+ * authentication throws is answered before the request is counted. `internal_error` comes from
+ * either side: a failing key lookup, or a failing handler. Every other code, and every success,
+ * is answered after.
+ */
+const LIMITER_REACH: Record<string, 'before' | 'either'> = {
+  unauthorized: 'before',
+  forbidden_scope: 'before',
+  internal_error: 'either',
+}
+
+type Presence = 'always' | 'sometimes'
+
+function limiterPresence(reach: 'after' | 'before' | 'either'): Array<[string, Presence]> {
+  if (reach === 'before') return []
+  const presence: Presence = reach === 'after' ? 'always' : 'sometimes'
+  return LIMITER_HEADERS.map((name) => [name, presence])
+}
+
+/** The headers one code's replies carry, and whether always or only sometimes. */
+function presenceOf(entry: ErrorEntry): ReadonlyMap<string, Presence> {
+  return new Map([
+    ...entry.headers.map((name): [string, Presence] => [name, 'always']),
+    ...limiterPresence(LIMITER_REACH[entry.code] ?? 'after'),
+  ])
+}
+
+const SUCCESS_PRESENCE: ReadonlyMap<string, Presence> = new Map(limiterPresence('after'))
+
+/**
+ * A status's headers: every header any of its codes carries, `required` only where every code
+ * always carries it. A header some code carries only sometimes is declared without `required`,
+ * which OpenAPI reads as "may be present".
+ */
+function declaredHeaders(
+  presences: ReadonlyArray<ReadonlyMap<string, Presence>>,
+): Record<string, HeaderDoc & { required?: true }> {
+  const names = [...new Set(presences.flatMap((presence) => [...presence.keys()]))]
+  return Object.fromEntries(
+    names.map((name) => {
+      const required = presences.every((presence) => presence.get(name) === 'always')
+      return [name, { ...headerSchema(name), ...(required ? { required: true as const } : {}) }]
+    }),
+  )
+}
+
+const isSuccess = (status: string) => Number(status) >= 200 && Number(status) < 300
 
 function entryOfClass(ErrorType: ErrorClass): ErrorEntry {
   const probe = new ErrorType('probe')
@@ -97,7 +158,7 @@ function lookup(code: string): ErrorEntry {
   return entry
 }
 
-function headerSchema(name: string) {
+function headerSchema(name: string): HeaderDoc {
   const doc = HEADER_DOCS[name]
   if (!doc) throw new Error(`Header ${name} has no entry in HEADER_DOCS`)
   return doc
@@ -111,10 +172,11 @@ function describeCodes(entries: readonly ErrorEntry[]): string {
 /**
  * One status's response: `error` narrowed to exactly these codes with `enum` — never a union of
  * literals, which the serializer validates and would turn an unlisted code into a 500 — a
- * description naming each, one example per code keyed by it, and the headers they carry.
+ * description naming each, one example per code keyed by it, and the headers they carry, each
+ * `required` only where every code always carries it.
  */
 export function errorResponse(entries: readonly ErrorEntry[]): TSchema {
-  const headers = [...new Set(entries.flatMap((entry) => entry.headers))]
+  const headers = declaredHeaders(entries.map(presenceOf))
   return Type.Object(
     {
       error: Type.String({ ...ERROR_FIELD, enum: entries.map((entry) => entry.code) }),
@@ -126,9 +188,7 @@ export function errorResponse(entries: readonly ErrorEntry[]): TSchema {
       'x-examples': Object.fromEntries(
         entries.map((entry) => [entry.code, { value: { error: entry.code, ...entry.example } }]),
       ),
-      ...(headers.length > 0
-        ? { headers: Object.fromEntries(headers.map((name) => [name, headerSchema(name)])) }
-        : {}),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
     },
   )
 }
@@ -193,9 +253,10 @@ export function declaredCodes(schema: unknown, where: string): string[] {
 }
 
 /**
- * A route's response map with every shared rule that applies merged in. Where the route already
- * declares that status its codes come first and the shared one last; merging twice changes
- * nothing, which matters because Fastify hands the `HEAD` twin of a `GET` the same schema.
+ * A route's response map with every shared rule that applies merged in, and the limiter's headers
+ * on every success. Where the route already declares that status its codes come first and the
+ * shared one last; merging twice changes nothing, which matters because Fastify hands the `HEAD`
+ * twin of a `GET` the same schema.
  */
 export function withSharedResponses(
   response: Record<string, unknown> | undefined,
@@ -208,6 +269,13 @@ export function withSharedResponses(
     const existing = result[rule.status]
     const codes = existing === undefined ? [] : declaredCodes(existing, `${where} ${rule.status}`)
     result[rule.status] = errorResponse([...new Set([...codes, rule.code])].map(lookup))
+  }
+  // Every success has been counted by the limiter. A copy, never the route's own object: one
+  // success schema is often shared by many routes.
+  for (const [status, schema] of Object.entries(result)) {
+    if (isSuccess(status)) {
+      result[status] = { ...(schema as object), headers: declaredHeaders([SUCCESS_PRESENCE]) }
+    }
   }
   return result
 }

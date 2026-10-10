@@ -30,7 +30,7 @@ interface Operation {
   responses: Record<
     string,
     {
-      headers?: Record<string, unknown>
+      headers?: Record<string, { required?: boolean }>
       content?: {
         'application/json'?: { schema?: { properties?: { error?: { enum?: string[] } } } }
       }
@@ -189,8 +189,8 @@ describe('statuses every route shares', () => {
       expect(declared?.content?.['application/json']?.schema?.properties?.error?.enum).toContain(
         trigger.code,
       )
-      for (const header of Object.keys(declared?.headers ?? {})) {
-        expect(response.headers[header], header).toBeDefined()
+      for (const [header, declaration] of Object.entries(declared?.headers ?? {})) {
+        if (declaration.required === true) expect(response.headers[header], header).toBeDefined()
       }
     },
   )

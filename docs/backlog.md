@@ -4,17 +4,6 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
-## The rate-limit headers on a success are sent but not documented
-
-- Where: `src/shared/responses.ts`, `PLUGIN_HEADERS`; every 2xx in `openapi.json`
-- Found: 2026-10-09, in the review of the shared-status slice
-- Problem: `@fastify/rate-limit` sets `x-ratelimit-limit`, `-remaining` and `-reset` on every
-  reply, but the document declares them only on `429`. Send `GET /health` and read the
-  headers; then look for them under its `200` in `openapi.json`.
-- Impact: a consumer pacing itself from `x-ratelimit-remaining` before it is refused learns of
-  the header only by observing it. The recorder does not notice, because it checks only the
-  headers a route declares, never the ones a reply carries.
-
 ## The error catalogue lets a duplicate code overwrite the class's entry
 
 - Where: `src/shared/responses.ts`, `catalogue()`

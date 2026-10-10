@@ -2,7 +2,12 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { TenantRepository } from '../../src/modules/tenants/tenant.repository.js'
 import { TenantService } from '../../src/modules/tenants/tenant.service.js'
 import { SCOPES } from '../../src/shared/scopes.js'
-import { rateLimitScenarios, type Caller } from '../fixtures/datasets/rate-limit.js'
+import {
+  countedReplyCases,
+  LIMITER_HEADER_NAMES,
+  rateLimitScenarios,
+  type Caller,
+} from '../fixtures/datasets/rate-limit.js'
 import { buildTestApp, closeTestDb, getTestDb, resetDb, seedTenant } from './helpers.js'
 
 beforeEach(resetDb)
@@ -41,6 +46,22 @@ describe('the per-key rate limit', () => {
         }
       }
       expect(statuses).toEqual(expected)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('the headers of a counted reply', () => {
+  it.each(countedReplyCases)('$name', async ({ caller, method, url, status, counted }) => {
+    const callers = await seedCallers()
+    const app = await buildTestApp()
+    try {
+      const response = await app.inject({ method, url, headers: callers[caller] })
+      expect(response.statusCode).toBe(status)
+      for (const header of LIMITER_HEADER_NAMES) {
+        expect(response.headers[header] !== undefined, header).toBe(counted)
+      }
     } finally {
       await app.close()
     }

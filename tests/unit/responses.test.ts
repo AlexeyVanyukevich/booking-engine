@@ -10,7 +10,12 @@ import {
   withSharedResponses,
 } from '../../src/shared/responses.js'
 import { liftCases } from '../fixtures/datasets/required-headers.js'
-import { groupingCases, mergeCases, ruleCases } from '../fixtures/datasets/response-rules.js'
+import {
+  groupingCases,
+  mergeCases,
+  ruleCases,
+  type MergeCase,
+} from '../fixtures/datasets/response-rules.js'
 
 type ErrorClass = new (message: string) => errors.AppError
 
@@ -22,22 +27,41 @@ function classNamed(name: string): ErrorClass {
 
 interface Built {
   description?: string
-  headers?: Record<string, unknown>
+  headers?: Record<string, { required?: boolean }>
   'x-examples'?: Record<string, { value: { error: string } }>
-  properties: { error: { enum: string[] } }
+  properties?: { error?: { enum?: string[] } }
 }
 
 const built = (schema: unknown) => schema as Built
 
+const codesOf = (schema: unknown) => built(schema).properties?.error?.enum ?? []
+
 function shapeOf(response: Record<string, unknown>) {
-  const codes: Record<number, string[]> = {}
-  const headers: Record<number, string[]> = {}
+  const codes: Record<number, string[] | null> = {}
+  const headers: Record<number, Record<string, boolean>> = {}
   for (const [status, schema] of Object.entries(response)) {
-    codes[Number(status)] = built(schema).properties.error.enum
-    const names = Object.keys(built(schema).headers ?? {})
-    if (names.length > 0) headers[Number(status)] = names
+    codes[Number(status)] = built(schema).properties?.error?.enum ?? null
+    const declared = Object.entries(built(schema).headers ?? {})
+    if (declared.length > 0) {
+      headers[Number(status)] = Object.fromEntries(
+        declared.map(([name, header]) => [name, header.required === true]),
+      )
+    }
   }
   return { codes, headers }
+}
+
+/** What a route declares before the merge: its successes, then its own error classes. */
+function declaredBy({ successes, declared }: MergeCase): Record<string, unknown> {
+  return {
+    ...Object.fromEntries(
+      Object.entries(successes).map(([status, body]) => [
+        status,
+        body === 'none' ? Type.Null() : Type.Object({ status: Type.String() }),
+      ]),
+    ),
+    ...errorResponses(...declared.map(classNamed)),
+  }
 }
 
 describe('the shared rules', () => {
@@ -60,8 +84,8 @@ describe('errorResponses', () => {
 
   it.each(groupingCases)('keys one example per code, carrying that code: $name', ({ classes }) => {
     for (const schema of Object.values(errorResponses(...classes.map(classNamed)))) {
-      const { properties, 'x-examples': examples } = built(schema)
-      expect(Object.keys(examples ?? {})).toEqual(properties.error.enum)
+      const { 'x-examples': examples } = built(schema)
+      expect(Object.keys(examples ?? {})).toEqual(codesOf(schema))
       for (const [code, example] of Object.entries(examples ?? {})) {
         expect(example.value.error).toBe(code)
       }
@@ -70,7 +94,7 @@ describe('errorResponses', () => {
 
   it.each(groupingCases)('describes every code with its meaning: $name', ({ classes }) => {
     for (const schema of Object.values(errorResponses(...classes.map(classNamed)))) {
-      for (const code of built(schema).properties.error.enum) {
+      for (const code of codesOf(schema)) {
         expect(built(schema).description).toContain(
           `\`${code}\` — ${catalogue().get(code)!.meaning}`,
         )
@@ -80,20 +104,22 @@ describe('errorResponses', () => {
 })
 
 describe('withSharedResponses', () => {
-  it.each(mergeCases)('$name', ({ route, declared, expected, headers }) => {
-    const merged = withSharedResponses(errorResponses(...declared.map(classNamed)), route, 'probe')
-    expect(shapeOf(merged)).toEqual({ codes: expected, headers })
+  it.each(mergeCases)('$name', (testCase) => {
+    const merged = withSharedResponses(declaredBy(testCase), testCase.route, 'probe')
+    expect(shapeOf(merged)).toEqual({ codes: testCase.expected, headers: testCase.headers })
   })
 
-  it.each(mergeCases)('gives the same answer applied twice: $name', ({ route, declared }) => {
-    const once = withSharedResponses(errorResponses(...declared.map(classNamed)), route, 'probe')
-    expect(withSharedResponses(once, route, 'probe')).toEqual(once)
+  it.each(mergeCases)('gives the same answer applied twice: $name', (testCase) => {
+    const once = withSharedResponses(declaredBy(testCase), testCase.route, 'probe')
+    expect(withSharedResponses(once, testCase.route, 'probe')).toEqual(once)
   })
 
-  it('leaves success responses as they are', () => {
+  it('adds the headers to a copy, leaving the success schema it was given unchanged', () => {
     const ok: TSchema = Type.Object({ status: Type.String() })
     const merged = withSharedResponses({ 200: ok }, ruleCases[0]!.route, 'probe')
-    expect(merged['200']).toBe(ok)
+    expect(ok).toEqual(Type.Object({ status: Type.String() }))
+    expect(merged['200']).not.toBe(ok)
+    expect(merged['200']).toEqual({ ...ok, headers: expect.any(Object) })
   })
 
   it('refuses a shared status declared without errorResponses', () => {
