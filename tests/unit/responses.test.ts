@@ -5,9 +5,11 @@ import {
   catalogue,
   declaredCodes,
   errorResponses,
+  liftRequiredHeaders,
   SHARED_RULES,
   withSharedResponses,
 } from '../../src/shared/responses.js'
+import { liftCases } from '../fixtures/datasets/required-headers.js'
 import { groupingCases, mergeCases, ruleCases } from '../fixtures/datasets/response-rules.js'
 
 type ErrorClass = new (message: string) => errors.AppError
@@ -107,5 +109,28 @@ describe('withSharedResponses', () => {
 
   it('reads no codes from a schema without an enum', () => {
     expect(() => declaredCodes(Type.Object({}), 'GET /x 400')).toThrow(/errorResponses/)
+  })
+})
+
+describe('liftRequiredHeaders', () => {
+  const documentWith = (headers: Record<string, unknown> | undefined) => ({
+    openapi: '3.1.0',
+    paths: {
+      '/x': {
+        get: { responses: { '200': { description: 'ok', ...(headers ? { headers } : {}) } } },
+      },
+    },
+  })
+
+  it.each(liftCases)('$name', ({ headers, expected }) => {
+    const lifted = liftRequiredHeaders(documentWith(headers))
+    expect(lifted).toEqual(documentWith(expected))
+  })
+
+  it('leaves the document it was given unchanged', () => {
+    const given = documentWith(liftCases[0]!.headers)
+    const before = structuredClone(given)
+    liftRequiredHeaders(given)
+    expect(given).toEqual(before)
   })
 })
