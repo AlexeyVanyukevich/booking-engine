@@ -3,7 +3,7 @@
   "info": {
     "title": "Booking Engine",
     "version": "0.1.0",
-    "description": "A domain-agnostic booking engine, working on three abstractions — resource, schedule, booking — with no knowledge of what is being booked.\n\n**Conventions that apply everywhere**\n\n- Date ranges are half-open: `from` inclusive, `to` exclusive, at most 366 days.\n- Durations use a restricted ISO-8601 grammar. `P1D` and `PT24H` are **not** interchangeable: `P1D` runs anchor to anchor and spans 23, 24 or 25 real hours across a daylight-saving transition, and the written form is what makes a resource day-based.\n- Timezones must be named IANA zones. A fixed offset such as `+02:00` is rejected, because an offset carries no daylight-saving rules.\n- Weekdays are Monday = 0, Sunday = 6 — matching neither Postgres nor JavaScript.\n- Timestamps carry an offset: `2026-07-20T09:00:00+02:00`.\n- Errors always have the shape `{ error, message, details? }`.\n\nEvery request carries an API key in an `Authorization: Bearer` header. A key belongs to one tenant and sees only that tenant's rows; another tenant's id answers `404`, never `403`.\n\nA key holds a set of scopes, and each route requires exactly one of them. No scope implies another: `bookings.write` does not confer `bookings.read`, which is what lets a partner channel create bookings without being able to list the tenant's calendar. Keys are issued from the console."
+    "description": "A domain-agnostic booking engine, working on three abstractions — resource, schedule, booking — with no knowledge of what is being booked.\n\n**Conventions that apply everywhere**\n\n- Date ranges are half-open: `from` inclusive, `to` exclusive, at most 366 days.\n- Durations use a restricted ISO-8601 grammar. `P1D` and `PT24H` are **not** interchangeable: `P1D` runs anchor to anchor and spans 23, 24 or 25 real hours across a daylight-saving transition, and the written form is what makes a resource day-based.\n- Timezones must be named IANA zones. A fixed offset such as `+02:00` is rejected, because an offset carries no daylight-saving rules.\n- Weekdays are Monday = 0, Sunday = 6 — matching neither Postgres nor JavaScript.\n- Timestamps carry an offset: `2026-07-20T09:00:00+02:00`.\n- Errors always have the shape `{ error, message, details? }`.\n\nEvery request carries an API key in an `Authorization: Bearer` header. A key belongs to one tenant and sees only that tenant's rows; another tenant's id answers `404`, never `403`.\n\nA key holds a set of scopes, and each route requires exactly one of them. No scope implies another: `bookings.write` does not confer `bookings.read`, which is what lets a partner channel create bookings without being able to list the tenant's calendar. Keys are issued from the console.\n\nEvery reply the rate limiter has counted carries `x-ratelimit-limit`, `x-ratelimit-remaining` and `x-ratelimit-reset`, so a caller can pace itself before it is refused. A `401` or `403` is answered before the request is counted and carries none of them; a `500` carries them only when the failure came after it."
   },
   "components": {
     "schemas": {}
@@ -19,6 +19,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -45,25 +68,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -105,6 +132,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -232,6 +279,29 @@
         "responses": {
           "201": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -301,6 +371,29 @@
           },
           "400": {
             "description": "One of:\n\n- `invalid_pool_membership` — `pool_id` names a non-pool, a pool, or a resource on a different grid\n- `validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -359,7 +452,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -443,6 +537,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -482,6 +599,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -526,25 +666,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -586,6 +730,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -645,6 +809,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -717,6 +904,29 @@
           },
           "400": {
             "description": "`validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -764,7 +974,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -853,25 +1064,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -913,6 +1128,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -974,6 +1209,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1043,6 +1301,29 @@
           },
           "400": {
             "description": "`validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1090,7 +1371,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -1174,6 +1456,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1218,25 +1523,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -1278,6 +1587,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1388,6 +1717,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1457,6 +1809,29 @@
           },
           "400": {
             "description": "One of:\n\n- `invalid_pool_membership` — `pool_id` names a non-pool, a pool, or a resource on a different grid\n- `validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1515,7 +1890,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -1599,6 +1975,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1638,6 +2037,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1677,6 +2099,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1721,25 +2166,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -1781,6 +2230,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1840,10 +2309,56 @@
         ],
         "responses": {
           "204": {
-            "description": "Default Response"
+            "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            }
           },
           "400": {
             "description": "`validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1891,7 +2406,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -1975,6 +2491,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2014,6 +2553,29 @@
           },
           "409": {
             "description": "One of:\n\n- `resource_has_bookings` — `DELETE /resources/:id` with bookings on record\n- `pool_has_members` — `DELETE /resources/:id` on a pool whose members have not left",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2066,6 +2628,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2105,6 +2690,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2149,25 +2757,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -2209,6 +2821,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2253,7 +2885,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
+              },
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -2318,6 +2972,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2379,6 +3056,29 @@
           },
           "400": {
             "description": "`validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2426,7 +3126,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -2510,6 +3211,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2554,25 +3278,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -2614,6 +3342,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2768,6 +3516,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2829,6 +3600,29 @@
           },
           "400": {
             "description": "One of:\n\n- `schedule_shape_mismatch` — Rule shape does not match the slot duration\n- `schedule_overlap` — Two rules on one weekday overlap\n- `validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2896,7 +3690,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -2980,6 +3775,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3019,6 +3837,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3058,6 +3899,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3102,25 +3966,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -3162,6 +4030,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3246,6 +4134,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3309,6 +4220,29 @@
           },
           "400": {
             "description": "One of:\n\n- `invalid_range` — `to <= from`, or wider than `MAX_RANGE_DAYS`\n- `validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3367,7 +4301,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -3451,6 +4386,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3495,25 +4453,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -3555,6 +4517,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3692,6 +4674,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3752,6 +4757,29 @@
           },
           "400": {
             "description": "One of:\n\n- `schedule_shape_mismatch` — Rule shape does not match the slot duration\n- `validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3809,7 +4837,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -3893,6 +4922,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3932,6 +4984,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3971,6 +5046,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4015,25 +5113,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -4075,6 +5177,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4145,10 +5267,56 @@
         ],
         "responses": {
           "204": {
-            "description": "Default Response"
+            "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            }
           },
           "400": {
             "description": "`validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4196,7 +5364,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -4280,6 +5449,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4319,6 +5511,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4358,6 +5573,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4402,25 +5640,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -4462,6 +5704,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4546,6 +5808,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4596,6 +5881,29 @@
           },
           "400": {
             "description": "One of:\n\n- `invalid_range` — `to <= from`, or wider than `MAX_RANGE_DAYS`\n- `validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4654,7 +5962,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -4738,6 +6047,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4782,25 +6114,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -4842,6 +6178,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4964,6 +6320,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5035,6 +6414,29 @@
           },
           "201": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5106,6 +6508,29 @@
           },
           "400": {
             "description": "One of:\n\n- `invalid_interval` — `end_time <= start_time`\n- `invalid_slot_boundary` — Start or end does not fall on a slot boundary\n- `outside_schedule` — A slot in the requested run is not offered\n- `unsupported_concurrency_mode` — A booking reached the write path carrying `pool`; selection should have chosen a member\n- `validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5196,7 +6621,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -5280,6 +6706,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5319,6 +6768,29 @@
           },
           "409": {
             "description": "One of:\n\n- `resource_inactive` — The resource exists but `is_active` is false\n- `slot_unavailable` — The slots exist and are offered, but capacity is taken\n- `idempotency_key_reused` — Same key, different request body",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5379,6 +6851,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5418,6 +6913,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5462,25 +6980,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -5522,6 +7044,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5566,7 +7108,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
+              },
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -5697,6 +7261,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5771,6 +7358,29 @@
           },
           "400": {
             "description": "One of:\n\n- `invalid_range` — `to <= from`, or wider than `MAX_RANGE_DAYS`\n- `validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5829,7 +7439,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -5913,6 +7524,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5957,25 +7591,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -6017,6 +7655,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6078,6 +7736,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6149,6 +7830,29 @@
           },
           "400": {
             "description": "`validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6196,7 +7900,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -6280,6 +7985,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6324,25 +8052,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -6384,6 +8116,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6446,6 +8198,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6517,6 +8292,29 @@
           },
           "400": {
             "description": "`validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6564,7 +8362,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -6648,6 +8447,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6687,6 +8509,29 @@
           },
           "409": {
             "description": "`invalid_state_transition` — The requested transition is not legal from the current status",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6730,6 +8575,29 @@
           },
           "410": {
             "description": "`hold_expired` — `confirm` on a hold whose `held_until` has passed",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6772,6 +8640,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6811,6 +8702,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6855,25 +8769,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -6915,6 +8833,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6959,7 +8897,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
+              },
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -7024,6 +8984,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7095,6 +9078,29 @@
           },
           "400": {
             "description": "`validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7142,7 +9148,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -7226,6 +9233,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7265,6 +9295,29 @@
           },
           "409": {
             "description": "`invalid_state_transition` — The requested transition is not legal from the current status",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7308,6 +9361,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7347,6 +9423,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7391,25 +9490,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -7451,6 +9554,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7495,7 +9618,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
+              },
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -7560,6 +9705,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7631,6 +9799,29 @@
           },
           "400": {
             "description": "`validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7678,7 +9869,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -7762,6 +9954,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7801,6 +10016,29 @@
           },
           "409": {
             "description": "`invalid_state_transition` — The requested transition is not legal from the current status",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7844,6 +10082,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7883,6 +10144,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7927,25 +10211,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -7987,6 +10275,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8031,7 +10339,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
+              },
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -8096,6 +10426,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8167,6 +10520,29 @@
           },
           "400": {
             "description": "`validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8214,7 +10590,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -8298,6 +10675,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8337,6 +10737,29 @@
           },
           "409": {
             "description": "`invalid_state_transition` — The requested transition is not legal from the current status",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8380,6 +10803,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8419,6 +10865,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8463,25 +10932,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -8523,6 +10996,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8567,7 +11060,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
+              },
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -8667,6 +11182,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8738,6 +11276,29 @@
           },
           "400": {
             "description": "One of:\n\n- `invalid_interval` — `end_time <= start_time`\n- `invalid_slot_boundary` — Start or end does not fall on a slot boundary\n- `outside_schedule` — A slot in the requested run is not offered\n- `unsupported_concurrency_mode` — A booking reached the write path carrying `pool`; selection should have chosen a member\n- `validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8828,7 +11389,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -8912,6 +11474,29 @@
           },
           "404": {
             "description": "`not_found` — No such resource or booking, or no such route",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8951,6 +11536,29 @@
           },
           "409": {
             "description": "One of:\n\n- `invalid_state_transition` — The requested transition is not legal from the current status\n- `resource_inactive` — The resource exists but `is_active` is false\n- `slot_unavailable` — The slots exist and are offered, but capacity is taken",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9015,6 +11623,29 @@
           },
           "413": {
             "description": "`payload_too_large` — Body beyond Fastify's body limit",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9054,6 +11685,29 @@
           },
           "415": {
             "description": "`unsupported_media_type` — Body sent with a content type the route cannot parse",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9098,25 +11752,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -9158,6 +11816,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9202,7 +11880,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
+              },
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -9336,6 +12036,29 @@
         "responses": {
           "200": {
             "description": "Default Response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9410,6 +12133,29 @@
           },
           "400": {
             "description": "One of:\n\n- `invalid_range` — `to <= from`, or wider than `MAX_RANGE_DAYS`\n- `validation_error` — Body, query or path failed validation",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute",
+                "required": true
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute",
+                "required": true
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets",
+                "required": true
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9468,7 +12214,8 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Always `Bearer`, the scheme the key is sent in"
+                "description": "Always `Bearer`, the scheme the key is sent in",
+                "required": true
               }
             },
             "content": {
@@ -9557,25 +12304,29 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds to wait before sending the same request again"
+                "description": "Seconds to wait before sending the same request again",
+                "required": true
               },
               "x-ratelimit-limit": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute"
+                "description": "Requests this key may send per minute",
+                "required": true
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute"
+                "description": "Requests left in the current minute",
+                "required": true
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets"
+                "description": "Seconds until the current minute's count resets",
+                "required": true
               }
             },
             "content": {
@@ -9617,6 +12368,26 @@
           },
           "500": {
             "description": "`internal_error` — Anything unexpected",
+            "headers": {
+              "x-ratelimit-limit": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests this key may send per minute"
+              },
+              "x-ratelimit-remaining": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Requests left in the current minute"
+              },
+              "x-ratelimit-reset": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the current minute's count resets"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

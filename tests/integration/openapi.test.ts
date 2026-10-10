@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { generateOpenApiDocument, serializeOpenApiDocument } from '../../src/shared/openapi.js'
+import { documentedHeadersCases } from '../fixtures/datasets/documented-headers.js'
+import { LIMITER_HEADER_NAMES } from '../fixtures/datasets/rate-limit.js'
 import { buildTestApp, closeTestDb, resetDbWithTenant, testAuthorization } from './helpers.js'
 
 let app: FastifyInstance
@@ -54,7 +56,13 @@ describe('OpenAPI document', () => {
   })
 
   it('states the conventions a caller cannot guess', () => {
-    for (const rule of ['half-open', 'PT24H', 'Monday = 0', 'named IANA']) {
+    for (const rule of [
+      'half-open',
+      'PT24H',
+      'Monday = 0',
+      'named IANA',
+      'x-ratelimit-remaining',
+    ]) {
       expect(document.info.description).toContain(rule)
     }
   })
@@ -71,9 +79,15 @@ describe('OpenAPI document', () => {
     expect(documented.sort()).toEqual(known.sort())
   })
 
+  interface DocumentedHeader {
+    schema?: Record<string, unknown>
+    description?: string
+    required?: boolean
+  }
+
   interface DocumentedError {
     description: string
-    headers?: Record<string, unknown>
+    headers?: Record<string, DocumentedHeader>
     content: {
       'application/json': {
         schema: { properties: { error: { enum?: string[] } } }
@@ -102,14 +116,57 @@ describe('OpenAPI document', () => {
     expect(statuses).toEqual(expect.arrayContaining(['429', '500']))
   })
 
-  it('documents the rate-limit headers on a 429', () => {
-    const [, tooMany] = errorResponsesOf('get', '/resources').find(([status]) => status === '429')!
-    expect(Object.keys(tooMany.headers ?? {}).sort()).toEqual([
-      'retry-after',
-      'x-ratelimit-limit',
-      'x-ratelimit-remaining',
-      'x-ratelimit-reset',
-    ])
+  const headersOf = (method: string, path: string, status: string) => {
+    const responses = document.paths[path]![method]!.responses as Record<
+      string,
+      { headers?: Record<string, DocumentedHeader> }
+    >
+    const response = responses[status]
+    expect(response, `${method} ${path} declares no ${status}`).toBeDefined()
+    return response!.headers ?? {}
+  }
+
+  const requiredness = (headers: Record<string, DocumentedHeader>) =>
+    Object.fromEntries(
+      Object.entries(headers).map(([name, header]) => [name, header.required === true]),
+    )
+
+  it.each(documentedHeadersCases)(
+    'declares the headers of $method $path $status',
+    ({ method, path, status, headers }) => {
+      expect(requiredness(headersOf(method, path, status))).toEqual(headers)
+    },
+  )
+
+  it.each(ROUTES)(
+    'declares the limiter headers as required on every success of %s %s',
+    (method, path) => {
+      const successes = Object.keys(document.paths[path]![method]!.responses as object).filter(
+        (status) => status.startsWith('2'),
+      )
+      for (const status of successes) {
+        const declared = requiredness(headersOf(method, path, status))
+        for (const name of LIMITER_HEADER_NAMES) {
+          expect(declared[name], `${status} ${name}`).toBe(true)
+        }
+      }
+    },
+  )
+
+  it('places required on the header object, never inside its schema', () => {
+    for (const [method, path] of ROUTES) {
+      const responses = document.paths[path]![method]!.responses as Record<
+        string,
+        { headers?: Record<string, DocumentedHeader> }
+      >
+      for (const [status, response] of Object.entries(responses)) {
+        for (const [name, header] of Object.entries(response.headers ?? {})) {
+          expect(header.schema, `${method} ${path} ${status} ${name}`).not.toHaveProperty(
+            'required',
+          )
+        }
+      }
+    }
   })
 
   it('lists the codes a booking can lose its slot with', () => {
