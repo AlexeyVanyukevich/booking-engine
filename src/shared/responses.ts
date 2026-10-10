@@ -235,3 +235,41 @@ export function registerResponseRules(app: FastifyInstance): void {
     )
   })
 }
+
+interface DocumentHeaders {
+  paths?: Record<
+    string,
+    Record<
+      string,
+      {
+        responses?: Record<
+          string,
+          { headers?: Record<string, { schema?: { required?: unknown }; required?: boolean }> }
+        >
+      }
+    >
+  >
+}
+
+/**
+ * `@fastify/swagger` 9.8.1 copies everything a header declares except its description into the
+ * header's `schema`, so `required: true` would land inside the JSON Schema, where `required` must
+ * be an array of property names. This moves it onto the header object, where the OpenAPI Header
+ * Object defines it. Passed to the generator as `transformObject`, so the served document and
+ * the committed one both go through it. Returns a copy.
+ */
+export function liftRequiredHeaders<T extends object>(document: T): T {
+  const copy = structuredClone(document)
+  for (const operations of Object.values((copy as DocumentHeaders).paths ?? {})) {
+    for (const operation of Object.values(operations)) {
+      for (const response of Object.values(operation.responses ?? {})) {
+        for (const header of Object.values(response.headers ?? {})) {
+          if (header.schema?.required !== true) continue
+          delete header.schema.required
+          header.required = true
+        }
+      }
+    }
+  }
+  return copy
+}

@@ -18,7 +18,7 @@ import { TenantRepository } from './modules/tenants/tenant.repository.js'
 import { TenantService } from './modules/tenants/tenant.service.js'
 import { registerAuth } from './shared/auth.js'
 import { RateLimitedError, registerErrorHandler } from './shared/errors.js'
-import { registerResponseRules } from './shared/responses.js'
+import { liftRequiredHeaders, registerResponseRules } from './shared/responses.js'
 
 export interface AppDeps {
   config: AppConfig
@@ -107,7 +107,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // Generated from the same TypeBox schemas the routes validate against, so the
   // documentation cannot drift from the behaviour. Registered before the route
   // plugins, because the generator collects routes as they are added.
-  void app.register(fastifySwagger, { openapi: openapiDocument(deps.config) })
+  void app.register(fastifySwagger, {
+    openapi: openapiDocument(deps.config),
+    transformObject: (generated) =>
+      'openapiObject' in generated
+        ? liftRequiredHeaders(generated.openapiObject)
+        : generated.swaggerObject,
+  })
   void app.register(fastifySwaggerUi, {
     routePrefix: '/docs',
     uiConfig: { docExpansion: 'list', deepLinking: true, tryItOutEnabled: true },
