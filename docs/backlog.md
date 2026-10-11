@@ -4,6 +4,38 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## A malformed URL is answered by Fastify directly, against the document
+
+- Where: `src/app.ts`, the `Fastify({...})` options, which set no `frameworkErrors`; Fastify's
+  `onBadUrl`
+- Found: 2026-10-11, in the review of the rate-limit headers slice
+- Problem: a path that is not valid percent-encoding is refused before any hook runs. Send
+  `GET /resources/%E0%A4%A`: it answers `400 {"error":"Bad Request","code":"FST_ERR_BAD_URL",…}`,
+  not `validation_error` in the shape `http.md` requires, and carries no `x-ratelimit-*` header,
+  though `GET /resources/{id}` declares the three as required on its `400`. The recorder never
+  sees it, because no route matched. An over-long path parameter (`onMaxParamLength`) likely
+  takes the same path.
+- Impact: a consumer branching on `error` gets a code the engine never documents. Rare: it needs
+  a malformed URL. A `frameworkErrors` option routing these through the error handler would close it.
+
+## `x-ratelimit-limit` is described as per key on routes called without one
+
+- Where: `src/shared/responses.ts`, `HEADER_DOCS['x-ratelimit-limit']`
+- Found: 2026-10-11, in the review of the rate-limit headers slice
+- Problem: the description reads "Requests this key may send per minute". `GET /health` is
+  public, usually called without a key, and counted by address — yet its `200` and `429` carry
+  that description. Open `GET /health` at `/docs` and read its `200`'s headers.
+- Impact: cosmetic; a reader of the public route is told about a key it does not send.
+
+## The document's prose rules are asserted from a list in the test body
+
+- Where: `tests/integration/openapi.test.ts`, "states the conventions a caller cannot guess"
+- Found: 2026-10-11, in the review of the rate-limit headers slice
+- Problem: the phrases the description must contain — `half-open`, `PT24H`, `x-ratelimit-remaining`
+  and the rest — are an inline array, not a dataset, against the testing rule. Each new rule
+  extends the array in the body.
+- Impact: low; the check works. Adding a rule means editing a test rather than a row.
+
 ## The error catalogue lets a duplicate code overwrite the class's entry
 
 - Where: `src/shared/responses.ts`, `catalogue()`
