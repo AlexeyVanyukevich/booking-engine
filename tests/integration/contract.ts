@@ -1,11 +1,13 @@
 import type { FastifyInstance } from 'fastify'
 import { isDocsRoute } from '../../src/shared/auth.js'
+import { HEADER_DOCS } from '../../src/shared/responses.js'
 
 /**
  * Every reply the integration suite receives, checked against the route's own response schema —
  * the object the OpenAPI document is generated from, so the two cannot disagree. A status the
- * route does not declare, a code its status does not list, or a header declared `required` that
- * the reply lacks is recorded here; `contract.setup.ts` fails the test that drew it.
+ * route does not declare, a code its status does not list, a header declared `required` that the
+ * reply lacks, or a header the document describes that the reply carries and its status does not
+ * declare is recorded here; `contract.setup.ts` fails the test that drew it.
  *
  * Only replies to documented operations are checked: an unmatched path, the docs tree and hidden
  * routes are no operation in the document.
@@ -65,6 +67,13 @@ export function recordContract(app: FastifyInstance): void {
     for (const [header, declaration] of Object.entries(declared.headers ?? {})) {
       if (declaration.required === true && reply.getHeader(header) === undefined) {
         mismatches.push(`${where} answered ${status} without ${header}, which it declares`)
+      }
+    }
+
+    // Only the headers the document describes: content-type, date and the rest are HTTP's.
+    for (const header of Object.keys(HEADER_DOCS)) {
+      if (reply.getHeader(header) !== undefined && declared.headers?.[header] === undefined) {
+        mismatches.push(`${where} answered ${status} with ${header}, which it does not declare`)
       }
     }
     return payload
