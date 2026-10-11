@@ -1,6 +1,6 @@
 # `openapi.json` declares the rate-limit headers on every reply that carries them
 
-**Status:** approved · **Date:** 2026-10-10
+**Status:** implemented · **Date:** 2026-10-10
 
 **This is a decision record, not current truth.** It states what was decided on the date above and is not revised as the system changes. For what the engine does today, read [architecture.md](../../architecture.md) and [conventions.md](../../conventions.md) — where they disagree with this document, they are right.
 

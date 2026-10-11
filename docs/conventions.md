@@ -257,10 +257,22 @@ the generator reads it. The table is not restated here; `openapi.json` shows its
 `enum`, never a union of literals: the serializer ignores `enum`, but it validates an `anyOf`
 and would turn a correct answer carrying an unlisted code into a `500`.
 
+Headers are declared the same way, from what each code carries. A header is `required` on a
+status when every code under it always carries it, and declared without `required` when only
+some do. `@fastify/rate-limit` writes `x-ratelimit-limit`, `x-ratelimit-remaining` and
+`x-ratelimit-reset` on every request it counts, and it counts after authentication, so every
+success and every error status declares the three as required, with three exceptions: `401`
+and `403` are answered before the count and declare none, and `500` — answered before the count
+by a failing key lookup, after it by a failing handler — declares them without `required`.
+`LIMITER_REACH` in `src/shared/responses.ts` is that table. `@fastify/swagger` would put
+`required` inside the header's schema, where it is invalid; `liftRequiredHeaders`, passed to it
+as `transformObject`, moves it onto the header.
+
 Two tests keep the statuses true. Every integration test's replies pass a recorder,
 `tests/integration/contract.ts`, which fails the test when its route does not declare the
-reply's status or code, or when the reply lacks a header its route declares. A header the reply
-carries and the route does not declare is not checked. And `shared-responses.test.ts` triggers each
+reply's status or code, when the reply lacks a header its status declares as required, or when
+it carries a header the document describes — a key of `HEADER_DOCS` — that its status does not
+declare. HTTP's own headers are not checked. And `shared-responses.test.ts` triggers each
 shared rule on every route, asserting the route answers it where the rule applies and neither
 answers nor declares it where it does not. A code a route declares but no test draws is the
 one gap — see `docs/backlog.md`.
