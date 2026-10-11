@@ -34,6 +34,9 @@ interface Built {
 
 const built = (schema: unknown) => schema as Built
 
+/** A header a route might declare on its own success, which the limiter's three must not displace. */
+const LOCATION = { type: 'string', description: 'Where the created record lives', required: true }
+
 const codesOf = (schema: unknown) => built(schema).properties?.error?.enum ?? []
 
 function shapeOf(response: Record<string, unknown>) {
@@ -120,6 +123,13 @@ describe('withSharedResponses', () => {
     expect(ok).toEqual(Type.Object({ status: Type.String() }))
     expect(merged['200']).not.toBe(ok)
     expect(merged['200']).toEqual({ ...ok, headers: expect.any(Object) })
+  })
+
+  it('keeps a header the success already declares beside the limiter headers', () => {
+    const created = { ...Type.Object({ id: Type.String() }), headers: { location: LOCATION } }
+    const merged = withSharedResponses({ 201: created }, ruleCases[0]!.route, 'probe')
+    expect(built(merged['201']).headers).toMatchObject({ location: LOCATION })
+    expect(withSharedResponses(merged, ruleCases[0]!.route, 'probe')).toEqual(merged)
   })
 
   it('refuses a shared status declared without errorResponses', () => {

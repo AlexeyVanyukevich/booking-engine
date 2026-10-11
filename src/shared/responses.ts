@@ -271,10 +271,14 @@ export function withSharedResponses(
     result[rule.status] = errorResponse([...new Set([...codes, rule.code])].map(lookup))
   }
   // Every success has been counted by the limiter. A copy, never the route's own object: one
-  // success schema is often shared by many routes.
+  // success schema is often shared by many routes. Headers the route declares itself are kept.
   for (const [status, schema] of Object.entries(result)) {
     if (isSuccess(status)) {
-      result[status] = { ...(schema as object), headers: declaredHeaders([SUCCESS_PRESENCE]) }
+      const own = (schema as { headers?: Record<string, unknown> }).headers
+      result[status] = {
+        ...(schema as object),
+        headers: { ...own, ...declaredHeaders([SUCCESS_PRESENCE]) },
+      }
     }
   }
   return result
