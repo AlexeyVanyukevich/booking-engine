@@ -22,6 +22,7 @@ describe('loadConfig', () => {
       holdSweepEnabled: true,
       consolePort: 3001,
       rateLimitPerMinute: 600,
+      authFailuresPerMinute: 30,
       trustProxy: [],
     })
   })
@@ -39,6 +40,7 @@ describe('loadConfig', () => {
       holdSweepEnabled: true,
       consolePort: 3001,
       rateLimitPerMinute: 600,
+      authFailuresPerMinute: 30,
       trustProxy: [],
     })
   })
@@ -93,18 +95,27 @@ it('defaults the console port and the per-key rate limit', () => {
   const config = loadConfig(base)
   expect(config.consolePort).toBe(3001)
   expect(config.rateLimitPerMinute).toBe(600)
+  expect(config.authFailuresPerMinute).toBe(30)
 })
 
 it('reads the console port and the rate limit from the environment', () => {
-  const config = loadConfig({ ...base, CONSOLE_PORT: '4001', RATE_LIMIT_PER_MINUTE: '60' })
+  const config = loadConfig({
+    ...base,
+    CONSOLE_PORT: '4001',
+    RATE_LIMIT_PER_MINUTE: '60',
+    AUTH_FAILURES_PER_MINUTE: '5',
+  })
   expect(config.consolePort).toBe(4001)
   expect(config.rateLimitPerMinute).toBe(60)
+  expect(config.authFailuresPerMinute).toBe(5)
 })
 
 it.each([
   ['CONSOLE_PORT', '0'],
   ['CONSOLE_PORT', 'nope'],
   ['RATE_LIMIT_PER_MINUTE', '-1'],
+  ['AUTH_FAILURES_PER_MINUTE', '0'],
+  ['AUTH_FAILURES_PER_MINUTE', 'many'],
 ])('rejects %s=%s', (key, value) => {
   expect(() => loadConfig({ ...base, [key]: value })).toThrow(new RegExp(key))
 })

@@ -53,6 +53,7 @@ function openapiDocument(config: AppConfig) {
         "Every request carries an API key in an `Authorization: Bearer` header. A key belongs to one tenant and sees only that tenant's rows; another tenant's id answers `404`, never `403`.",
         "A key holds a set of scopes, and each route requires exactly one of them. No scope implies another: `bookings.write` does not confer `bookings.read`, which is what lets a partner channel create bookings without being able to list the tenant's calendar. Keys are issued from the console.",
         'Every reply the rate limiter has counted carries `x-ratelimit-limit`, `x-ratelimit-remaining` and `x-ratelimit-reset`, so a caller can pace itself before it is refused. A `401` or `403` is answered before the request is counted and carries none of them; a `500` carries them only when the failure came after it.',
+        `An address that fails authentication ${config.authFailuresPerMinute} times in a minute is refused \`429\` with \`Retry-After\` and none of the three, whatever key it sends next, until the minute ends.`,
       ),
     },
     servers: [{ url: `http://localhost:${config.port}`, description: 'Local' }],

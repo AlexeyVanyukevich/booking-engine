@@ -136,35 +136,35 @@ the engine does not emit:
 | ----------- | ------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `conflict`  | 409           | `concurrent_update`, **503** | Contention rolled the transaction back before the engine reached a decision; a 409 would claim the slots are contested. A 503 with `Retry-After` leaves resending to the caller — see below |
 
-| Code                           | Status | Meaning                                                                                 |
-| ------------------------------ | ------ | --------------------------------------------------------------------------------------- |
-| `validation_error`             | 400    | Body, query or path failed validation                                                   |
-| `invalid_range`                | 400    | `to <= from`, or wider than `MAX_RANGE_DAYS`                                            |
-| `schedule_overlap`             | 400    | Two rules on one weekday overlap                                                        |
-| `schedule_shape_mismatch`      | 400    | Rule shape does not match the slot duration                                             |
-| `unsupported_concurrency_mode` | 400    | A booking reached the write path carrying `pool`; selection should have chosen a member |
-| `invalid_pool_membership`      | 400    | `pool_id` names a non-pool, a pool, or a resource on a different grid                   |
-| `invalid_interval`             | 400    | `end_time <= start_time`                                                                |
-| `invalid_slot_boundary`        | 400    | Start or end does not fall on a slot boundary                                           |
-| `outside_schedule`             | 400    | A slot in the requested run is not offered                                              |
-| `unauthorized`                 | 401    | Missing, malformed, unknown or revoked key; inactive tenant                             |
-| `forbidden_scope`              | 403    | Valid key, but it does not hold the scope the route requires                            |
-| `forbidden_origin`             | 403    | A console write whose `Origin` is not the console itself                                |
-| `not_found`                    | 404    | No such resource or booking, or no such route                                           |
-| `method_not_allowed`           | 405    | The framework matched the path but not the method                                       |
-| `not_acceptable`               | 406    | The framework could not satisfy the `Accept` header                                     |
-| `slot_unavailable`             | 409    | The slots exist and are offered, but capacity is taken                                  |
-| `resource_inactive`            | 409    | The resource exists but `is_active` is false                                            |
-| `invalid_state_transition`     | 409    | The requested transition is not legal from the current status                           |
-| `resource_has_bookings`        | 409    | `DELETE /resources/:id` with bookings on record                                         |
-| `pool_has_members`             | 409    | `DELETE /resources/:id` on a pool whose members have not left                           |
-| `idempotency_key_reused`       | 409    | Same key, different request body                                                        |
-| `hold_expired`                 | 410    | `confirm` on a hold whose `held_until` has passed                                       |
-| `payload_too_large`            | 413    | Body beyond Fastify's body limit                                                        |
-| `unsupported_media_type`       | 415    | Body sent with a content type the route cannot parse                                    |
-| `rate_limited`                 | 429    | The per-key limit for this minute is used up; carries `Retry-After`                     |
-| `internal_error`               | 500    | Anything unexpected                                                                     |
-| `concurrent_update`            | 503    | Contention rolled the transaction back; retry the request                               |
+| Code                           | Status | Meaning                                                                                                                  |
+| ------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `validation_error`             | 400    | Body, query or path failed validation                                                                                    |
+| `invalid_range`                | 400    | `to <= from`, or wider than `MAX_RANGE_DAYS`                                                                             |
+| `schedule_overlap`             | 400    | Two rules on one weekday overlap                                                                                         |
+| `schedule_shape_mismatch`      | 400    | Rule shape does not match the slot duration                                                                              |
+| `unsupported_concurrency_mode` | 400    | A booking reached the write path carrying `pool`; selection should have chosen a member                                  |
+| `invalid_pool_membership`      | 400    | `pool_id` names a non-pool, a pool, or a resource on a different grid                                                    |
+| `invalid_interval`             | 400    | `end_time <= start_time`                                                                                                 |
+| `invalid_slot_boundary`        | 400    | Start or end does not fall on a slot boundary                                                                            |
+| `outside_schedule`             | 400    | A slot in the requested run is not offered                                                                               |
+| `unauthorized`                 | 401    | Missing, malformed, unknown or revoked key; inactive tenant                                                              |
+| `forbidden_scope`              | 403    | Valid key, but it does not hold the scope the route requires                                                             |
+| `forbidden_origin`             | 403    | A console write whose `Origin` is not the console itself                                                                 |
+| `not_found`                    | 404    | No such resource or booking, or no such route                                                                            |
+| `method_not_allowed`           | 405    | The framework matched the path but not the method                                                                        |
+| `not_acceptable`               | 406    | The framework could not satisfy the `Accept` header                                                                      |
+| `slot_unavailable`             | 409    | The slots exist and are offered, but capacity is taken                                                                   |
+| `resource_inactive`            | 409    | The resource exists but `is_active` is false                                                                             |
+| `invalid_state_transition`     | 409    | The requested transition is not legal from the current status                                                            |
+| `resource_has_bookings`        | 409    | `DELETE /resources/:id` with bookings on record                                                                          |
+| `pool_has_members`             | 409    | `DELETE /resources/:id` on a pool whose members have not left                                                            |
+| `idempotency_key_reused`       | 409    | Same key, different request body                                                                                         |
+| `hold_expired`                 | 410    | `confirm` on a hold whose `held_until` has passed                                                                        |
+| `payload_too_large`            | 413    | Body beyond Fastify's body limit                                                                                         |
+| `unsupported_media_type`       | 415    | Body sent with a content type the route cannot parse                                                                     |
+| `rate_limited`                 | 429    | The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After` |
+| `internal_error`               | 500    | Anything unexpected                                                                                                      |
+| `concurrent_update`            | 503    | Contention rolled the transaction back; retry the request                                                                |
 
 `slot_unavailable` and `outside_schedule` mean different things and must not be conflated: the
 first says the slots are offered but taken, the second that they were never offered.
@@ -328,19 +328,20 @@ neither is proof-read by hand, which is to say not at all.
 Environment variables, read and validated once in `src/config.ts`. A malformed value fails
 fast at startup rather than surfacing later as an unexplained 500.
 
-| Variable                      | Default    | Meaning                                                                                                                                                                                 |
-| ----------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                | _required_ | Postgres connection string                                                                                                                                                              |
-| `PORT`                        | `3000`     | HTTP port                                                                                                                                                                               |
-| `LOG_LEVEL`                   | `info`     | Fastify/Pino log level                                                                                                                                                                  |
-| `MAX_RANGE_DAYS`              | `366`      | Widest `from`/`to` window accepted anywhere in the engine                                                                                                                               |
-| `DEFAULT_HOLD_MINUTES`        | `10`       | Applied when `hold: true` carries no minutes                                                                                                                                            |
-| `MAX_HOLD_MINUTES`            | `60`       | Upper bound accepted from a caller for `hold_minutes`                                                                                                                                   |
-| `HOLD_SWEEP_INTERVAL_SECONDS` | `60`       | How often the hold sweep runs, in either entrypoint                                                                                                                                     |
-| `HOLD_SWEEP_ENABLED`          | `true`     | Whether the API process sweeps on a timer; `worker.js` sweeps regardless — see [the sweep topologies](../README.md#background-sweep)                                                    |
-| `CONSOLE_PORT`                | `3001`     | Port for the key console. There is deliberately no `CONSOLE_HOST` — the bind address is hard-coded to `127.0.0.1`                                                                       |
-| `RATE_LIMIT_PER_MINUTE`       | `600`      | Requests a single key may make per minute, per API process, before `429 rate_limited`                                                                                                   |
-| `TRUST_PROXY`                 |            | Comma-separated addresses or CIDRs of the reverse proxies in front of the API. `X-Forwarded-For` from them names the client the rate limits count; empty, the socket peer is the client |
+| Variable                      | Default    | Meaning                                                                                                                                                                                             |
+| ----------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                | _required_ | Postgres connection string                                                                                                                                                                          |
+| `PORT`                        | `3000`     | HTTP port                                                                                                                                                                                           |
+| `LOG_LEVEL`                   | `info`     | Fastify/Pino log level                                                                                                                                                                              |
+| `MAX_RANGE_DAYS`              | `366`      | Widest `from`/`to` window accepted anywhere in the engine                                                                                                                                           |
+| `DEFAULT_HOLD_MINUTES`        | `10`       | Applied when `hold: true` carries no minutes                                                                                                                                                        |
+| `MAX_HOLD_MINUTES`            | `60`       | Upper bound accepted from a caller for `hold_minutes`                                                                                                                                               |
+| `HOLD_SWEEP_INTERVAL_SECONDS` | `60`       | How often the hold sweep runs, in either entrypoint                                                                                                                                                 |
+| `HOLD_SWEEP_ENABLED`          | `true`     | Whether the API process sweeps on a timer; `worker.js` sweeps regardless — see [the sweep topologies](../README.md#background-sweep)                                                                |
+| `CONSOLE_PORT`                | `3001`     | Port for the key console. There is deliberately no `CONSOLE_HOST` — the bind address is hard-coded to `127.0.0.1`                                                                                   |
+| `RATE_LIMIT_PER_MINUTE`       | `600`      | Requests a single key may make per minute, per API process, before `429 rate_limited`                                                                                                               |
+| `AUTH_FAILURES_PER_MINUTE`    | `30`       | Failed authentications one client address may make per minute, per API process; past it every request from that address that needs a key is answered `429 rate_limited` before the key is looked up |
+| `TRUST_PROXY`                 |            | Comma-separated addresses or CIDRs of the reverse proxies in front of the API. `X-Forwarded-For` from them names the client the rate limits count; empty, the socket peer is the client             |
 
 `HOLD_SWEEP_ENABLED` defaulting to true is load-bearing, not cosmetic: a dead worker service
 would otherwise be an invisible failure. See the README for why.

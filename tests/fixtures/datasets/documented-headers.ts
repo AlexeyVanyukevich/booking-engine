@@ -21,12 +21,17 @@ export const documentedHeadersCases: DocumentedHeadersCase[] = [
   { method: 'post', path: '/bookings/{id}/confirm', status: '410', headers: COUNTED },
   { method: 'post', path: '/resources', status: '413', headers: COUNTED },
   { method: 'post', path: '/resources', status: '415', headers: COUNTED },
-  { method: 'get', path: '/health', status: '429', headers: { 'retry-after': true, ...COUNTED } },
+  {
+    method: 'get',
+    path: '/health',
+    status: '429',
+    headers: { 'retry-after': true, ...SOMETIMES_COUNTED },
+  },
   {
     method: 'get',
     path: '/resources',
     status: '429',
-    headers: { 'retry-after': true, ...COUNTED },
+    headers: { 'retry-after': true, ...SOMETIMES_COUNTED },
   },
   { method: 'get', path: '/resources', status: '500', headers: SOMETIMES_COUNTED },
   {

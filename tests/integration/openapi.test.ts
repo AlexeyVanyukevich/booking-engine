@@ -62,6 +62,7 @@ describe('OpenAPI document', () => {
       'Monday = 0',
       'named IANA',
       'x-ratelimit-remaining',
+      'fails authentication',
     ]) {
       expect(document.info.description).toContain(rule)
     }

@@ -247,7 +247,8 @@ export class HoldExpiredError extends AppError {
 export class RateLimitedError extends AppError {
   readonly statusCode = 429
   readonly code = 'rate_limited'
-  readonly meaning = 'The per-key limit for this minute is used up; carries `Retry-After`'
+  readonly meaning =
+    'The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`'
   readonly example: ErrorExample = { message: 'Too many requests; slow down and retry' }
 }
 

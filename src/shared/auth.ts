@@ -1,5 +1,6 @@
-import type { FastifyInstance } from 'fastify'
-import { ForbiddenScopeError, UnauthorizedError } from './errors.js'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { ForbiddenScopeError, RateLimitedError, UnauthorizedError } from './errors.js'
+import { failureKey } from './rate-limit.js'
 import type { Scope } from './scopes.js'
 import type { TenantService } from '../modules/tenants/tenant.service.js'
 
@@ -73,24 +74,50 @@ export function registerAuth(app: FastifyInstance, service: TenantService): void
   })
 
   /**
+   * Failed authentications, counted per address. Authentication runs before the per-key limiter,
+   * so without this a caller holding no credential could make the engine look a key up once per
+   * request, without limit. Only failures count, so a consumer's valid traffic never spends this
+   * budget; every kind of failure counts alike, as every kind answers alike. It shares the
+   * limiter's store, which is why its key is prefixed.
+   */
+  const failures = app.createRateLimit({
+    max: app.config.authFailuresPerMinute,
+    keyGenerator: failureKey,
+  })
+
+  async function failed(request: FastifyRequest): Promise<UnauthorizedError> {
+    await failures(request)
+    // One message for every failure, so a caller cannot tell "no such key" from "wrong secret"
+    // and turn prefix enumeration into a probe.
+    return new UnauthorizedError('A valid API key is required')
+  }
+
+  /**
    * `onRequest`, not `preHandler`. Fastify validates the body and the query string between the
    * two, so a `preHandler` hook answers 400 to a caller holding no key at all — the wrong
    * status, and a disclosure: the shape a route demands is readable without authenticating.
    * `onRequest` is the first hook in the lifecycle, and it needs no body.
    */
-  app.addHook('onRequest', async (request) => {
+  app.addHook('onRequest', async (request, reply) => {
     const config = request.routeOptions.config as { scope?: Scope; public?: true } | undefined
     if (config?.public === true) return
     if (isDocsRoute(request.url)) return
 
+    // Read before anything else, so a refused address costs no lookup. `remaining`, not the
+    // plugin's `isExceeded`: a read never takes the count past `max`, so `isExceeded` would let
+    // one more failure through to the database.
+    const seen = await failures(request, { increment: false })
+    if (!seen.isAllowed && seen.remaining === 0) {
+      void reply.header('retry-after', String(seen.ttlInSeconds))
+      throw new RateLimitedError('Too many failed authentications from this address')
+    }
+
     const header = request.headers.authorization
     const match = header === undefined ? null : BEARER.exec(header)
-    // One message for every failure below, so a caller cannot tell "no such key" from
-    // "wrong secret" and turn prefix enumeration into a probe.
-    if (match === null) throw new UnauthorizedError('A valid API key is required')
+    if (match === null) throw await failed(request)
 
     const resolved = await service.authenticate(match[1]!)
-    if (resolved === undefined) throw new UnauthorizedError('A valid API key is required')
+    if (resolved === undefined) throw await failed(request)
 
     /**
      * No route matched, so there is no scope to demand. The key was still required, which is
