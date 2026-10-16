@@ -1,3 +1,5 @@
+import type { AppConfig } from '../../../src/config.js'
+
 /**
  * Who sends a request: one of two keys on the same tenant, a credential the engine could
  * never have issued, or no credential at all. Two keys on one tenant, rather than one key on
@@ -5,10 +7,31 @@
  */
 export type Caller = 'first' | 'second' | 'malformed' | 'anonymous'
 
+/**
+ * Socket peers and forwarded clients, from the ranges RFC 5737 reserves for documentation, so
+ * no row can be mistaken for a real host.
+ */
+export const ADDRESS_A = '203.0.113.1'
+export const ADDRESS_B = '203.0.113.2'
+export const CLIENT_X = '198.51.100.1'
+export const CLIENT_Y = '198.51.100.2'
+
+export interface LimitedRequest {
+  caller: Caller
+  /** The socket peer. Default `ADDRESS_A`. */
+  from?: string
+  /** Default `/resources`. */
+  path?: string
+  /** Sent as `X-Forwarded-For`. */
+  forwardedFor?: string
+}
+
 export interface RateLimitScenario {
   name: string
-  limit: number
-  requests: Caller[]
+  /** Laid over `buildTestApp`'s defaults, which are high enough never to throttle. */
+  config: Partial<AppConfig>
+  /** A bare caller is a request from `ADDRESS_A` to `/resources`. */
+  requests: Array<Caller | LimitedRequest>
   /** The status each request in `requests` answers, in the same order. */
   expected: number[]
 }
@@ -16,25 +39,25 @@ export interface RateLimitScenario {
 export const rateLimitScenarios: RateLimitScenario[] = [
   {
     name: 'requests up to the limit are served',
-    limit: 3,
+    config: { rateLimitPerMinute: 3 },
     requests: ['first', 'first', 'first'],
     expected: [200, 200, 200],
   },
   {
     name: 'every request past the limit is refused',
-    limit: 2,
+    config: { rateLimitPerMinute: 2 },
     requests: ['first', 'first', 'first', 'first'],
     expected: [200, 200, 429, 429],
   },
   {
     name: 'a second key is served while the first is exhausted',
-    limit: 2,
+    config: { rateLimitPerMinute: 2 },
     requests: ['first', 'first', 'first', 'second', 'second'],
     expected: [200, 200, 429, 200, 200],
   },
   {
     name: 'a second key is counted on its own',
-    limit: 1,
+    config: { rateLimitPerMinute: 1 },
     requests: ['first', 'second', 'first', 'second'],
     expected: [200, 200, 429, 429],
   },
@@ -43,15 +66,55 @@ export const rateLimitScenarios: RateLimitScenario[] = [
   // counted. These rows pin that order; `docs/backlog.md` records why it is a gap.
   {
     name: 'a malformed key is rejected without being counted',
-    limit: 1,
+    config: { rateLimitPerMinute: 1 },
     requests: ['malformed', 'malformed', 'malformed'],
     expected: [401, 401, 401],
   },
   {
     name: 'a request with no key is rejected without being counted',
-    limit: 1,
+    config: { rateLimitPerMinute: 1 },
     requests: ['anonymous', 'anonymous', 'anonymous'],
     expected: [401, 401, 401],
+  },
+  {
+    name: 'a public route called without a key is counted by address',
+    config: { rateLimitPerMinute: 1 },
+    requests: [
+      { caller: 'anonymous', path: '/health' },
+      { caller: 'anonymous', path: '/health', from: ADDRESS_B },
+      { caller: 'anonymous', path: '/health' },
+    ],
+    expected: [200, 200, 429],
+  },
+  {
+    name: 'X-Forwarded-For from an untrusted peer is ignored',
+    config: { rateLimitPerMinute: 1 },
+    requests: [
+      { caller: 'anonymous', path: '/health', forwardedFor: CLIENT_X },
+      { caller: 'anonymous', path: '/health', forwardedFor: CLIENT_Y },
+    ],
+    expected: [200, 429],
+  },
+  {
+    name: "a trusted proxy's X-Forwarded-For names the client",
+    config: { rateLimitPerMinute: 1, trustProxy: [ADDRESS_A] },
+    requests: [
+      { caller: 'anonymous', path: '/health', forwardedFor: CLIENT_X },
+      { caller: 'anonymous', path: '/health', forwardedFor: CLIENT_Y },
+      { caller: 'anonymous', path: '/health', forwardedFor: CLIENT_X },
+    ],
+    expected: [200, 200, 429],
+  },
+  // The client writes the left of the header and the proxy appends the right; only the rightmost
+  // entry a trusted hop added can be believed.
+  {
+    name: 'a client behind a trusted proxy cannot choose its address',
+    config: { rateLimitPerMinute: 1, trustProxy: [ADDRESS_A] },
+    requests: [
+      { caller: 'anonymous', path: '/health', forwardedFor: CLIENT_X },
+      { caller: 'anonymous', path: '/health', forwardedFor: `${CLIENT_Y}, ${CLIENT_X}` },
+    ],
+    expected: [200, 429],
   },
 ]
 

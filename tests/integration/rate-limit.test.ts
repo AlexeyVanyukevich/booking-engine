@@ -3,10 +3,12 @@ import { TenantRepository } from '../../src/modules/tenants/tenant.repository.js
 import { TenantService } from '../../src/modules/tenants/tenant.service.js'
 import { SCOPES } from '../../src/shared/scopes.js'
 import {
+  ADDRESS_A,
   countedReplyCases,
   LIMITER_HEADER_NAMES,
   rateLimitScenarios,
   type Caller,
+  type LimitedRequest,
 } from '../fixtures/datasets/rate-limit.js'
 import { buildTestApp, closeTestDb, getTestDb, resetDb, seedTenant } from './helpers.js'
 
@@ -28,21 +30,28 @@ async function seedCallers(): Promise<Record<Caller, Record<string, string>>> {
 describe('the per-key rate limit', () => {
   // Each case builds its own app: the limit differs per case, and the plugin counts in memory,
   // so a shared app would carry one case's requests into the next.
-  it.each(rateLimitScenarios)('$name', async ({ limit, requests, expected }) => {
+  it.each(rateLimitScenarios)('$name', async ({ config, requests, expected }) => {
     const callers = await seedCallers()
-    const app = await buildTestApp({ rateLimitPerMinute: limit })
+    const app = await buildTestApp(config)
     try {
       const statuses: number[] = []
-      for (const caller of requests) {
+      for (const request of requests) {
+        const spec: LimitedRequest = typeof request === 'string' ? { caller: request } : request
+        const { caller, from = ADDRESS_A, path = '/resources', forwardedFor } = spec
         const response = await app.inject({
           method: 'GET',
-          url: '/resources',
-          headers: callers[caller],
+          url: path,
+          remoteAddress: from,
+          headers: {
+            ...callers[caller],
+            ...(forwardedFor === undefined ? {} : { 'x-forwarded-for': forwardedFor }),
+          },
         })
         statuses.push(response.statusCode)
         if (response.statusCode === 429) {
           expect(response.json()).toEqual({ error: 'rate_limited', message: expect.any(String) })
           expect(response.headers['retry-after']).toMatch(/^[1-9]\d*$/)
+          expect(Number(response.headers['retry-after'])).toBeLessThanOrEqual(60)
         }
       }
       expect(statuses).toEqual(expected)

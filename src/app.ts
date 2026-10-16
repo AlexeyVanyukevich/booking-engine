@@ -82,6 +82,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     // on the PATCH body is what makes `timezone` and `concurrency_mode` immutable, and a
     // silently dropped field would look to the caller like a successful change.
     ajv: { customOptions: { removeAdditional: false } },
+    // The rate limits count by `request.ip`. Behind a reverse proxy that is the proxy, so every
+    // caller would share one count; naming the proxy lets its `X-Forwarded-For` name the client.
+    trustProxy: deps.config.trustProxy.length > 0 ? deps.config.trustProxy : false,
   }).withTypeProvider<TypeBoxTypeProvider>()
 
   app.decorate('db', deps.db)

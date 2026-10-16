@@ -328,18 +328,19 @@ neither is proof-read by hand, which is to say not at all.
 Environment variables, read and validated once in `src/config.ts`. A malformed value fails
 fast at startup rather than surfacing later as an unexplained 500.
 
-| Variable                      | Default    | Meaning                                                                                                                              |
-| ----------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `DATABASE_URL`                | _required_ | Postgres connection string                                                                                                           |
-| `PORT`                        | `3000`     | HTTP port                                                                                                                            |
-| `LOG_LEVEL`                   | `info`     | Fastify/Pino log level                                                                                                               |
-| `MAX_RANGE_DAYS`              | `366`      | Widest `from`/`to` window accepted anywhere in the engine                                                                            |
-| `DEFAULT_HOLD_MINUTES`        | `10`       | Applied when `hold: true` carries no minutes                                                                                         |
-| `MAX_HOLD_MINUTES`            | `60`       | Upper bound accepted from a caller for `hold_minutes`                                                                                |
-| `HOLD_SWEEP_INTERVAL_SECONDS` | `60`       | How often the hold sweep runs, in either entrypoint                                                                                  |
-| `HOLD_SWEEP_ENABLED`          | `true`     | Whether the API process sweeps on a timer; `worker.js` sweeps regardless — see [the sweep topologies](../README.md#background-sweep) |
-| `CONSOLE_PORT`                | `3001`     | Port for the key console. There is deliberately no `CONSOLE_HOST` — the bind address is hard-coded to `127.0.0.1`                    |
-| `RATE_LIMIT_PER_MINUTE`       | `600`      | Requests a single key may make per minute, per API process, before `429 rate_limited`                                                |
+| Variable                      | Default    | Meaning                                                                                                                                                                                 |
+| ----------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                | _required_ | Postgres connection string                                                                                                                                                              |
+| `PORT`                        | `3000`     | HTTP port                                                                                                                                                                               |
+| `LOG_LEVEL`                   | `info`     | Fastify/Pino log level                                                                                                                                                                  |
+| `MAX_RANGE_DAYS`              | `366`      | Widest `from`/`to` window accepted anywhere in the engine                                                                                                                               |
+| `DEFAULT_HOLD_MINUTES`        | `10`       | Applied when `hold: true` carries no minutes                                                                                                                                            |
+| `MAX_HOLD_MINUTES`            | `60`       | Upper bound accepted from a caller for `hold_minutes`                                                                                                                                   |
+| `HOLD_SWEEP_INTERVAL_SECONDS` | `60`       | How often the hold sweep runs, in either entrypoint                                                                                                                                     |
+| `HOLD_SWEEP_ENABLED`          | `true`     | Whether the API process sweeps on a timer; `worker.js` sweeps regardless — see [the sweep topologies](../README.md#background-sweep)                                                    |
+| `CONSOLE_PORT`                | `3001`     | Port for the key console. There is deliberately no `CONSOLE_HOST` — the bind address is hard-coded to `127.0.0.1`                                                                       |
+| `RATE_LIMIT_PER_MINUTE`       | `600`      | Requests a single key may make per minute, per API process, before `429 rate_limited`                                                                                                   |
+| `TRUST_PROXY`                 |            | Comma-separated addresses or CIDRs of the reverse proxies in front of the API. `X-Forwarded-For` from them names the client the rate limits count; empty, the socket peer is the client |
 
 `HOLD_SWEEP_ENABLED` defaulting to true is load-bearing, not cosmetic: a dead worker service
 would otherwise be an invisible failure. See the README for why.

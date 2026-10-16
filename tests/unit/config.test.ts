@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { loadConfig } from '../../src/config.js'
+import { acceptedTrustProxy, refusedTrustProxy } from '../fixtures/datasets/trust-proxy.js'
 
 const valid = {
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
@@ -21,6 +22,7 @@ describe('loadConfig', () => {
       holdSweepEnabled: true,
       consolePort: 3001,
       rateLimitPerMinute: 600,
+      trustProxy: [],
     })
   })
 
@@ -37,6 +39,7 @@ describe('loadConfig', () => {
       holdSweepEnabled: true,
       consolePort: 3001,
       rateLimitPerMinute: 600,
+      trustProxy: [],
     })
   })
 
@@ -104,4 +107,15 @@ it.each([
   ['RATE_LIMIT_PER_MINUTE', '-1'],
 ])('rejects %s=%s', (key, value) => {
   expect(() => loadConfig({ ...base, [key]: value })).toThrow(new RegExp(key))
+})
+
+describe('TRUST_PROXY', () => {
+  it.each(acceptedTrustProxy)('accepts $name', ({ raw, expected }) => {
+    const env = raw === undefined ? base : { ...base, TRUST_PROXY: raw }
+    expect(loadConfig(env).trustProxy).toEqual(expected)
+  })
+
+  it.each(refusedTrustProxy)('refuses $name', ({ raw }) => {
+    expect(() => loadConfig({ ...base, TRUST_PROXY: raw })).toThrow(/TRUST_PROXY/)
+  })
 })
