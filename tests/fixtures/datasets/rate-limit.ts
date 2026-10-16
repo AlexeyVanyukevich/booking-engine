@@ -18,6 +18,10 @@ export const ADDRESS_A = '203.0.113.1'
 export const ADDRESS_B = '203.0.113.2'
 export const CLIENT_X = '198.51.100.1'
 export const CLIENT_Y = '198.51.100.2'
+/** Two clients in one /64 of the IPv6 documentation range, RFC 3849, and one in the next. */
+export const CLIENT_V6 = '2001:db8::1'
+export const CLIENT_V6_SAME_64 = '2001:db8::2'
+export const CLIENT_V6_NEXT_64 = '2001:db8:0:1::1'
 
 export interface LimitedRequest {
   caller: Caller
@@ -186,6 +190,16 @@ export const rateLimitScenarios: RateLimitScenario[] = [
       { caller: 'first', forwardedFor: CLIENT_X },
     ],
     expected: [401, 200, 429],
+  },
+  {
+    name: 'an IPv6 client behind a trusted proxy is counted by its /64',
+    config: { authFailuresPerMinute: 1, trustProxy: [ADDRESS_A] },
+    requests: [
+      { caller: 'malformed', forwardedFor: CLIENT_V6 },
+      { caller: 'first', forwardedFor: CLIENT_V6_SAME_64 },
+      { caller: 'first', forwardedFor: CLIENT_V6_NEXT_64 },
+    ],
+    expected: [401, 429, 200],
   },
   {
     name: 'a valid key is counted on an unmatched path',

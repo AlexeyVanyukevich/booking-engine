@@ -11,9 +11,11 @@ describe('rate-limit store keys', () => {
   })
 
   // The rows that spell another count's key in a header are what make this more than a
-  // restatement: without the prefixes, two of them would collide.
-  it('gives no two rows the same key', () => {
-    const keys = storeKeyCases.map(keyFor)
-    expect(new Set(keys).size).toBe(keys.length)
+  // restatement: without the prefixes, two of them would collide. Rows the dataset means to
+  // share a key, such as two addresses in one /64, say so by expecting the same one.
+  it('gives two rows the same key only where the dataset expects it', () => {
+    expect(new Set(storeKeyCases.map(keyFor)).size).toBe(
+      new Set(storeKeyCases.map((row) => row.expected)).size,
+    )
   })
 })
