@@ -168,21 +168,3 @@ commit that fixes it.
   always returns `RateLimitedError`, a `429`. `ban` is not set today, so the path is never taken.
 - Impact: none today. Whoever sets `ban` gets `429` where the plugin documents `403`, with no
   test to say so.
-
-## Requests the limiter never sees: rejected keys and unmatched paths
-
-- Where: `src/app.ts`, the `@fastify/rate-limit` registration; `src/shared/auth.ts`, the
-  `onRequest` hook; `src/shared/errors.ts`, `setNotFoundHandler`
-- Found: 2026-10-01, while fixing the rate-limit status
-- Problem: the limiter attaches its `onRequest` hook to each route, and authentication is an
-  application-level `onRequest` hook, which Fastify runs first. A request whose key is missing,
-  malformed, unknown or revoked is answered `401` before the limiter sees it, so no number of
-  them is ever refused. `tests/fixtures/datasets/rate-limit.ts` pins this: three requests with
-  a malformed key under a limit of one all answer `401`. A request to a path no route matches
-  has no route hook at all, so a valid key can draw `404`s without limit; the plugin's README
-  says the not-found handler must opt in for those to count.
-- Impact: a well-formed key costs a database lookup per request, unthrottled, either from a
-  caller holding no credential or from a valid key aimed at unmatched paths. The secrets are
-  long enough that guessing one stays infeasible, so the cost is load, not access. Counting by
-  address before authentication, or giving failed authentication its own lower limit, and
-  registering the not-found handler with the limiter, would close it.

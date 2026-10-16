@@ -384,7 +384,10 @@ export function registerErrorHandler(app: FastifyInstance): void {
       .send({ error: INTERNAL_ERROR.code, message: INTERNAL_ERROR.example.message })
   })
 
-  app.setNotFoundHandler((_request, reply) => {
+  // An unmatched path has no route, so no route hook, and the limiter never sees it unless the
+  // handler opts in. Authentication has already run, so only a valid key arrives here, and it is
+  // counted like any other request that key sends. Needs `@fastify/rate-limit` registered first.
+  app.setNotFoundHandler({ preHandler: app.rateLimit() }, (_request, reply) => {
     void reply.status(404).send({ error: 'not_found', message: 'Route not found' })
   })
 }
