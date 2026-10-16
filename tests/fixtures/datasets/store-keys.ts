@@ -45,4 +45,36 @@ export const storeKeyCases: StoreKeyCase[] = [
     request: { headers: { authorization: 'address:203.0.113.1' }, ip: '198.51.100.1' },
     expected: 'key:address:203.0.113.1',
   },
+  // The plugin's own key generator groups IPv6 by /64, the ordinary size of one allocation; a
+  // client holding a /64 would otherwise get a fresh count from each of its 2^64 addresses.
+  {
+    name: 'an IPv6 failure is counted by its /64',
+    count: 'failure',
+    request: { headers: {}, ip: '2001:db8::abcd' },
+    expected: 'auth-failures:2001:db8::',
+  },
+  {
+    name: 'another address in the same /64 shares that count',
+    count: 'failure',
+    request: { headers: {}, ip: '2001:db8::1' },
+    expected: 'auth-failures:2001:db8::',
+  },
+  {
+    name: 'the next /64 is another count',
+    count: 'failure',
+    request: { headers: {}, ip: '2001:db8:0:1::1' },
+    expected: 'auth-failures:2001:db8:0:1::',
+  },
+  {
+    name: 'an IPv4-mapped address is counted as its IPv4 form',
+    count: 'failure',
+    request: { headers: {}, ip: '::ffff:203.0.113.1' },
+    expected: 'auth-failures:203.0.113.1',
+  },
+  {
+    name: 'a keyless IPv6 request is counted by its /64',
+    count: 'limiter',
+    request: { headers: {}, ip: '2001:db8::abcd' },
+    expected: 'address:2001:db8::',
+  },
 ]

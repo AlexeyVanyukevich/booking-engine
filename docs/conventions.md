@@ -206,8 +206,9 @@ Routes declare their requirement as `config: { scope }` beside the schema, or `c
 { public: true }`. A route that declares neither fails at **startup**, so a route added later
 cannot quietly admit any key.
 
-Failed authentication is counted per client address, at `AUTH_FAILURES_PER_MINUTE`. Every
-`401` counts alike; a `403` does not, because the key was valid. Once an address has used its
+Failed authentication is counted per client address, at `AUTH_FAILURES_PER_MINUTE` — an IPv6
+address by its /64, the ordinary size of one allocation, as the rate limiter itself counts.
+Every `401` counts alike; a `403` does not, because the key was valid. Once an address has used its
 budget, every request from it that needs a key is answered `429 rate_limited` with
 `Retry-After` before the key is looked up — a valid key included, since telling it is valid
 would take the lookup the refusal exists to save — until the minute ends. Public routes are not

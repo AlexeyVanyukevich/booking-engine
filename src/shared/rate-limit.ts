@@ -1,3 +1,5 @@
+import { normalizeIP } from '@fastify/rate-limit'
+
 /**
  * The two fields of a request a store key is built from. A `FastifyRequest` satisfies it, and
  * a test can pass a plain object.
@@ -15,7 +17,7 @@ export interface KeySource {
  */
 export function limiterKey(request: KeySource): string {
   const header = request.headers.authorization
-  return header === undefined ? `address:${request.ip}` : `key:${header}`
+  return header === undefined ? `address:${clientOf(request)}` : `key:${header}`
 }
 
 /**
@@ -24,5 +26,14 @@ export function limiterKey(request: KeySource): string {
  * children share keys.
  */
 export function failureKey(request: KeySource): string {
-  return `auth-failures:${request.ip}`
+  return `auth-failures:${clientOf(request)}`
+}
+
+/**
+ * The address a count belongs to, as the plugin's own key generator would have it: an IPv6
+ * address by its /64, the ordinary size of one allocation, and an IPv4-mapped one as IPv4.
+ * Counted raw, a client holding a /64 would get a fresh budget from each of its addresses.
+ */
+function clientOf(request: KeySource): string {
+  return normalizeIP(request.ip)
 }
