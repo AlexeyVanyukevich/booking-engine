@@ -206,6 +206,19 @@ Routes declare their requirement as `config: { scope }` beside the schema, or `c
 { public: true }`. A route that declares neither fails at **startup**, so a route added later
 cannot quietly admit any key.
 
+Failed authentication is counted per client address, at `AUTH_FAILURES_PER_MINUTE`. Every
+`401` counts alike; a `403` does not, because the key was valid. Once an address has used its
+budget, every request from it that needs a key is answered `429 rate_limited` with
+`Retry-After` before the key is looked up — a valid key included, since telling it is valid
+would take the lookup the refusal exists to save — until the minute ends. Public routes are not
+affected. The count lives in the rate limiter's store, under a prefix no header can spell, so a
+caller cannot spend another address's budget.
+
+Behind a reverse proxy every caller arrives from the proxy's address, and would share one
+count. `TRUST_PROXY` names the proxies whose `X-Forwarded-For` is believed; the client is the
+rightmost entry a trusted hop did not add, so a client cannot choose its address by writing
+the header itself.
+
 `concurrent_update` is not a third kind of conflict. Postgres reports a deadlock as SQLSTATE
 `40P01` and a serialization failure as `40001`; both mean the transaction was rolled back
 through no fault of the request, so the answer is `503` with a `Retry-After` header rather than
@@ -260,10 +273,12 @@ and would turn a correct answer carrying an unlisted code into a `500`.
 Headers are declared the same way, from what each code carries. A header is `required` on a
 status when every code under it always carries it, and declared without `required` when only
 some do. `@fastify/rate-limit` writes `x-ratelimit-limit`, `x-ratelimit-remaining` and
-`x-ratelimit-reset` on every request it counts, and it counts after authentication, so every
-success and every error status declares the three as required, with three exceptions: `401`
-and `403` are answered before the count and declare none, and `500` — answered before the count
-by a failing key lookup, after it by a failing handler — declares them without `required`.
+`x-ratelimit-reset` on every request it counts — unmatched paths included, through the
+not-found handler — and it counts after authentication, so every success and every error
+status declares the three as required, with four exceptions. `401` and `403` are answered
+before the count and declare none. `500` — answered before the count by a failing key lookup,
+after it by a failing handler — and `429` — the limiter's own refusal carries them,
+authentication's refusal of an address does not — declare them without `required`.
 `LIMITER_REACH` in `src/shared/responses.ts` is that table. `@fastify/swagger` would put
 `required` inside the header's schema, where it is invalid; `liftRequiredHeaders`, passed to it
 as `transformObject`, moves it onto the header.

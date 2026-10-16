@@ -4,6 +4,39 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## Concurrent failed authentications can pass the address's limit
+
+- Where: `src/shared/auth.ts`, the `onRequest` hook — the failure count is read, then the key
+  looked up, then the count incremented
+- Found: 2026-10-11, while planning the failed-authentication limit
+- Problem: _n_ requests from one address sent at once all read the count before any of them
+  increments it, so each reaches the key lookup. Send 100 bad keys in parallel with
+  `AUTH_FAILURES_PER_MINUTE=30`: up to 100 lookups run, not 30.
+- Impact: the bound is `max + n − 1` per burst, not `max`. Sequential traffic is held exactly.
+  Incrementing before the lookup and refunding on success would close it; the plugin's store has
+  no decrement.
+
+## The test helper cannot raise the failed-authentication limit
+
+- Where: `testing/src/index.ts`, `EngineOptions`
+- Found: 2026-10-11, while planning the failed-authentication limit
+- Problem: the helper passes `RATE_LIMIT_PER_MINUTE` through but not `AUTH_FAILURES_PER_MINUTE`.
+  Every request a consumer's suite sends reaches the API container from one address, so a suite
+  sending more than 30 bad keys a minute gets `429` where it expects `401`.
+- Impact: a consumer testing its own handling of a rejected key many times in one file is
+  throttled, with no option to say otherwise. An `authFailuresPerMinute` option, passed as the
+  variable, would close it.
+
+## A public route's count can be reset by changing the header
+
+- Where: `src/shared/rate-limit.ts`, `limiterKey()`
+- Found: 2026-10-11, while designing the failed-authentication limit
+- Problem: a request carrying an `Authorization` header is counted by it, even on a public route
+  that never reads it. A caller sending `GET /health` with a different made-up header each time
+  gets a fresh count each time and is never refused.
+- Impact: low — `/health` is cheap, and the plugin's in-memory store holds at most 5 000 keys,
+  so the rotation cannot grow memory. Counting public routes by address alone would close it.
+
 ## A malformed URL is answered by Fastify directly, against the document
 
 - Where: `src/app.ts`, the `Fastify({...})` options, which set no `frameworkErrors`; Fastify's
