@@ -5,6 +5,7 @@ import { TenantService } from '../../src/modules/tenants/tenant.service.js'
 import { SCOPES } from '../../src/shared/scopes.js'
 import {
   ADDRESS_A,
+  ADDRESS_B,
   countedReplyCases,
   failureWindowCases,
   LIMITER_HEADER_NAMES,
@@ -29,7 +30,7 @@ async function seedCallers(): Promise<Record<Caller, Record<string, string>>> {
     malformed: { authorization: 'Bearer garbage' },
     unknown: { authorization: `Bearer ${generateKey().key}` },
     anonymous: {},
-    forged: { authorization: `auth-failures:${ADDRESS_A}` },
+    forged: { authorization: ADDRESS_B },
   }
 }
 

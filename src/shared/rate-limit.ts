@@ -8,17 +8,21 @@ export interface KeySource {
 }
 
 /**
- * Every count shares the limiter's store, and the caller writes the `Authorization` header. A
- * prefix only the engine writes is what stops a header from naming another count's key:
- * without it, `Authorization: auth-failures:203.0.113.1` on a public route would spend that
- * address's failure budget.
+ * The per-key limiter counts requests with a credential and keyless calls to public routes in
+ * one store, and the caller writes the `Authorization` header. The prefixes keep the two
+ * apart: without them, `Authorization: 203.0.113.2` on `GET /health` would spend the count of
+ * a keyless caller at that address.
  */
 export function limiterKey(request: KeySource): string {
   const header = request.headers.authorization
   return header === undefined ? `address:${request.ip}` : `key:${header}`
 }
 
-/** Failed authentications are counted by address: the credential sent is the failure. */
+/**
+ * Failed authentications are counted by address: the credential sent is the failure. The count
+ * lives in a child store of its own, so its prefix only matters to a custom store whose
+ * children share keys.
+ */
 export function failureKey(request: KeySource): string {
   return `auth-failures:${request.ip}`
 }
