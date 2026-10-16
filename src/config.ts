@@ -1,3 +1,5 @@
+import { isIP } from 'node:net'
+
 /**
  * Everything `buildApp` itself reads. The connection string is deliberately not part of it:
  * the app never connects — an entrypoint creates the database handle and passes it in — and
@@ -14,6 +16,8 @@ export interface AppConfig {
   holdSweepEnabled: boolean
   consolePort: number
   rateLimitPerMinute: number
+  /** Proxies whose `X-Forwarded-For` names the client. Empty: the socket peer is the client. */
+  trustProxy: string[]
 }
 
 export interface Config extends AppConfig {
@@ -47,6 +51,31 @@ function booleanFlag(env: NodeJS.ProcessEnv, key: string, fallback: boolean): bo
   throw new Error(`Invalid configuration: ${key} must be "true" or "false", got "${raw}"`)
 }
 
+/**
+ * Addresses and CIDRs only. Fastify also accepts names such as `loopback`, but a list the
+ * loader can check entry by entry is one a typo cannot widen.
+ */
+function proxyList(env: NodeJS.ProcessEnv, key: string): string[] {
+  const raw = env[key]
+  if (raw === undefined || raw.trim() === '') return []
+  return raw.split(',').map((item) => {
+    const entry = item.trim()
+    if (!isProxyEntry(entry)) {
+      throw new Error(`Invalid configuration: ${key} must list addresses or CIDRs, got "${entry}"`)
+    }
+    return entry
+  })
+}
+
+function isProxyEntry(entry: string): boolean {
+  const [address = '', prefix, ...rest] = entry.split('/')
+  const family = isIP(address)
+  if (family === 0 || rest.length > 0) return false
+  if (prefix === undefined) return true
+  if (!/^\d{1,3}$/.test(prefix)) return false
+  return Number(prefix) <= (family === 4 ? 32 : 128)
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   return { databaseUrl: requireString(env, 'DATABASE_URL'), ...loadAppConfig(env) }
 }
@@ -70,5 +99,6 @@ export function loadAppConfig(env: NodeJS.ProcessEnv): AppConfig {
     // hard-coded to 127.0.0.1 in src/console.ts rather than left to a deployment to get wrong.
     consolePort: positiveInt(env, 'CONSOLE_PORT', 3001),
     rateLimitPerMinute: positiveInt(env, 'RATE_LIMIT_PER_MINUTE', 600),
+    trustProxy: proxyList(env, 'TRUST_PROXY'),
   }
 }

@@ -58,6 +58,7 @@ export async function buildTestApp(
       // High enough that a suite firing hundreds of requests in one minute is not throttled;
       // the limiter's own behaviour is asserted in tests/integration/rate-limit.test.ts.
       rateLimitPerMinute: 100_000,
+      trustProxy: [],
       ...overrides,
     },
     db,
