@@ -187,6 +187,21 @@ export const rateLimitScenarios: RateLimitScenario[] = [
     ],
     expected: [401, 200, 429],
   },
+  {
+    name: 'a valid key is counted on an unmatched path',
+    config: { rateLimitPerMinute: 1 },
+    requests: [
+      { caller: 'first', path: '/nope' },
+      { caller: 'first', path: '/nope' },
+    ],
+    expected: [404, 429],
+  },
+  {
+    name: 'an unmatched path spends the same budget as a route',
+    config: { rateLimitPerMinute: 2 },
+    requests: [{ caller: 'first', path: '/nope' }, 'first', 'first'],
+    expected: [404, 200, 429],
+  },
 ]
 
 export interface FailureWindowCase {
@@ -294,5 +309,13 @@ export const countedReplyCases: CountedReplyCase[] = [
     url: '/resources',
     status: 429,
     counted: false,
+  },
+  {
+    name: 'an unmatched path with a valid key',
+    caller: 'first',
+    method: 'GET',
+    url: '/nope',
+    status: 404,
+    counted: true,
   },
 ]

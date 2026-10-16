@@ -92,20 +92,22 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate('db', deps.db)
   app.decorate('config', deps.config)
 
-  registerErrorHandler(app)
-
   // Per key, so one tenant cannot exhaust the engine for the others. The plugin attaches its
   // hook to each route, and route hooks run after the application-level authentication hook,
-  // so a request whose key is rejected is never counted. What is counted is keyed on the
-  // header, or on the address for a public route called without one — see `limiterKey` for why
-  // each key is prefixed. The plugin throws what the builder returns, so it must be an
-  // `AppError` to answer 429 rather than 500.
+  // so a request whose key is rejected is never counted here; authentication counts it by
+  // address instead. What is counted is keyed on the header, or on the address for a public
+  // route called without one — see `limiterKey` for why each key is prefixed. The plugin throws
+  // what the builder returns, so it must be an `AppError` to answer 429 rather than 500.
   await app.register(fastifyRateLimit, {
     max: deps.config.rateLimitPerMinute,
     timeWindow: '1 minute',
     keyGenerator: limiterKey,
     errorResponseBuilder: () => new RateLimitedError('Too many requests; slow down and retry'),
   })
+
+  // After the limiter: the not-found handler counts through its `rateLimit()` decorator. Routes
+  // register later, so every one still inherits this error handler.
+  registerErrorHandler(app)
 
   registerAuth(app, new TenantService(new TenantRepository(deps.db)))
   // Before the generator: it reads each route's response schema as this hook leaves it.
