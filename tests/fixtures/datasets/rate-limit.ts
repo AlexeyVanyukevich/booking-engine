@@ -1,11 +1,13 @@
 import type { AppConfig } from '../../../src/config.js'
 
 /**
- * Who sends a request: one of two keys on the same tenant, a credential the engine could
- * never have issued, or no credential at all. Two keys on one tenant, rather than one key on
- * each of two tenants, are what show the limit is counted per key and not per tenant.
+ * Who sends a request. `first` and `second` are two keys on one tenant, which is what shows the
+ * per-key limit is counted per key and not per tenant. `narrow` is a valid key without
+ * `resources.read`. `malformed` could never have been issued; `unknown` is well formed and was
+ * not. `forged` spells the failure key of `ADDRESS_A` in its header.
  */
-export type Caller = 'first' | 'second' | 'malformed' | 'anonymous'
+export type Caller =
+  'first' | 'second' | 'narrow' | 'malformed' | 'unknown' | 'anonymous' | 'forged'
 
 /**
  * Socket peers and forwarded clients, from the ranges RFC 5737 reserves for documentation, so
@@ -61,21 +63,6 @@ export const rateLimitScenarios: RateLimitScenario[] = [
     requests: ['first', 'second', 'first', 'second'],
     expected: [200, 200, 429, 429],
   },
-  // Authentication is an application-level `onRequest` hook and the limiter a route-level one,
-  // so Fastify runs authentication first: a rejected credential is answered before it is ever
-  // counted. These rows pin that order; `docs/backlog.md` records why it is a gap.
-  {
-    name: 'a malformed key is rejected without being counted',
-    config: { rateLimitPerMinute: 1 },
-    requests: ['malformed', 'malformed', 'malformed'],
-    expected: [401, 401, 401],
-  },
-  {
-    name: 'a request with no key is rejected without being counted',
-    config: { rateLimitPerMinute: 1 },
-    requests: ['anonymous', 'anonymous', 'anonymous'],
-    expected: [401, 401, 401],
-  },
   {
     name: 'a public route called without a key is counted by address',
     config: { rateLimitPerMinute: 1 },
@@ -116,6 +103,104 @@ export const rateLimitScenarios: RateLimitScenario[] = [
     ],
     expected: [200, 429],
   },
+  {
+    name: 'a malformed key is refused once its address has failed too often',
+    config: { authFailuresPerMinute: 2 },
+    requests: ['malformed', 'malformed', 'malformed'],
+    expected: [401, 401, 429],
+  },
+  {
+    name: 'a well-formed key never issued is refused the same way',
+    config: { authFailuresPerMinute: 2 },
+    requests: ['unknown', 'unknown', 'unknown'],
+    expected: [401, 401, 429],
+  },
+  {
+    name: 'a request with no key is refused the same way',
+    config: { authFailuresPerMinute: 2 },
+    requests: ['anonymous', 'anonymous', 'anonymous'],
+    expected: [401, 401, 429],
+  },
+  {
+    name: 'an unmatched path without a key counts as a failure',
+    config: { authFailuresPerMinute: 2 },
+    requests: [
+      { caller: 'anonymous', path: '/nope' },
+      { caller: 'anonymous', path: '/nope' },
+      { caller: 'anonymous', path: '/nope' },
+    ],
+    expected: [401, 401, 429],
+  },
+  {
+    name: 'a refused address is refused a valid key too',
+    config: { authFailuresPerMinute: 2 },
+    requests: ['malformed', 'malformed', 'first'],
+    expected: [401, 401, 429],
+  },
+  {
+    name: 'the same valid key from another address is served',
+    config: { authFailuresPerMinute: 2 },
+    requests: ['malformed', 'malformed', { caller: 'first', from: ADDRESS_B }],
+    expected: [401, 401, 200],
+  },
+  {
+    name: "one address's failures leave another's count untouched",
+    config: { authFailuresPerMinute: 2 },
+    requests: ['malformed', 'malformed', { caller: 'malformed', from: ADDRESS_B }],
+    expected: [401, 401, 401],
+  },
+  {
+    name: "a valid key's requests add nothing to the failure count",
+    config: { authFailuresPerMinute: 2 },
+    requests: ['first', 'first', 'first', 'malformed', 'malformed', 'malformed'],
+    expected: [200, 200, 200, 401, 401, 429],
+  },
+  {
+    name: 'a valid key without the scope is not a failure',
+    config: { authFailuresPerMinute: 1 },
+    requests: ['narrow', 'narrow', 'malformed'],
+    expected: [403, 403, 401],
+  },
+  {
+    name: 'a refused address still reaches a public route',
+    config: { authFailuresPerMinute: 1 },
+    requests: ['malformed', { caller: 'anonymous', path: '/health' }, 'first'],
+    expected: [401, 200, 429],
+  },
+  {
+    name: "a header spelling an address's failure key does not spend it",
+    config: { authFailuresPerMinute: 1 },
+    requests: [
+      { caller: 'forged', path: '/health' },
+      { caller: 'forged', path: '/health' },
+      'first',
+    ],
+    expected: [200, 200, 200],
+  },
+  {
+    name: 'behind a trusted proxy, failures are counted per client',
+    config: { authFailuresPerMinute: 1, trustProxy: [ADDRESS_A] },
+    requests: [
+      { caller: 'malformed', forwardedFor: CLIENT_X },
+      { caller: 'first', forwardedFor: CLIENT_Y },
+      { caller: 'first', forwardedFor: CLIENT_X },
+    ],
+    expected: [401, 200, 429],
+  },
+]
+
+export interface FailureWindowCase {
+  name: string
+  /** Seconds after the failure that used the address's budget up. */
+  waitSeconds: number
+  /** What a valid key from that address answers then. */
+  expected: number
+}
+
+/** The budget is one failure; the window is the plugin's minute. */
+export const failureWindowCases: FailureWindowCase[] = [
+  { name: 'a second before the minute ends it is still refused', waitSeconds: 59, expected: 429 },
+  { name: 'once the minute ends it is served again', waitSeconds: 60, expected: 200 },
 ]
 
 /** The three headers `@fastify/rate-limit` writes on a request it counts. */
@@ -143,6 +228,10 @@ export interface CountedReplyCase {
   status: number
   /** Whether the reply carries all three limiter headers; when false, it carries none. */
   counted: boolean
+  /** Laid over `buildTestApp`'s defaults. */
+  config?: Partial<AppConfig>
+  /** Sent from the same address first, their answers ignored. */
+  before?: Caller[]
 }
 
 export const countedReplyCases: CountedReplyCase[] = [
@@ -193,6 +282,17 @@ export const countedReplyCases: CountedReplyCase[] = [
     method: 'GET',
     url: '/resources',
     status: 401,
+    counted: false,
+  },
+  // The per-key headers describe a key's budget; this refusal is of an address.
+  {
+    name: 'a refusal of an address that failed authentication',
+    caller: 'first',
+    before: ['malformed'],
+    config: { authFailuresPerMinute: 1 },
+    method: 'GET',
+    url: '/resources',
+    status: 429,
     counted: false,
   },
 ]

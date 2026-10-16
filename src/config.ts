@@ -16,6 +16,7 @@ export interface AppConfig {
   holdSweepEnabled: boolean
   consolePort: number
   rateLimitPerMinute: number
+  authFailuresPerMinute: number
   /** Proxies whose `X-Forwarded-For` names the client. Empty: the socket peer is the client. */
   trustProxy: string[]
 }
@@ -99,6 +100,7 @@ export function loadAppConfig(env: NodeJS.ProcessEnv): AppConfig {
     // hard-coded to 127.0.0.1 in src/console.ts rather than left to a deployment to get wrong.
     consolePort: positiveInt(env, 'CONSOLE_PORT', 3001),
     rateLimitPerMinute: positiveInt(env, 'RATE_LIMIT_PER_MINUTE', 600),
+    authFailuresPerMinute: positiveInt(env, 'AUTH_FAILURES_PER_MINUTE', 30),
     trustProxy: proxyList(env, 'TRUST_PROXY'),
   }
 }

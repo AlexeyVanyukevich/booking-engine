@@ -32,6 +32,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     HOLD_SWEEP_ENABLED: 'false',
     // High enough that a whole spec file's traffic is never throttled.
     RATE_LIMIT_PER_MINUTE: '100000',
+    AUTH_FAILURES_PER_MINUTE: '100000',
   })
 
   const consoleApp = await buildConsoleApp({ config, db })

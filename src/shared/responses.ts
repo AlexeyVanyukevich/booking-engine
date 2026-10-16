@@ -75,13 +75,15 @@ const LIMITER_HEADERS = ['x-ratelimit-limit', 'x-ratelimit-remaining', 'x-rateli
  * Where a code is answered relative to the limiter. Authentication is an application-level
  * `onRequest` hook and the limiter a route-level one, which Fastify runs after it, so what
  * authentication throws is answered before the request is counted. `internal_error` comes from
- * either side: a failing key lookup, or a failing handler. Every other code, and every success,
- * is answered after.
+ * either side: a failing key lookup, or a failing handler. `rate_limited` too: the limiter's own
+ * refusal is counted, and authentication's refusal of an address that keeps failing is not.
+ * Every other code, and every success, is answered after.
  */
 const LIMITER_REACH: Record<string, 'before' | 'either'> = {
   unauthorized: 'before',
   forbidden_scope: 'before',
   internal_error: 'either',
+  rate_limited: 'either',
 }
 
 type Presence = 'always' | 'sometimes'

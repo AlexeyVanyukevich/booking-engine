@@ -3,7 +3,7 @@
   "info": {
     "title": "Booking Engine",
     "version": "0.1.0",
-    "description": "A domain-agnostic booking engine, working on three abstractions — resource, schedule, booking — with no knowledge of what is being booked.\n\n**Conventions that apply everywhere**\n\n- Date ranges are half-open: `from` inclusive, `to` exclusive, at most 366 days.\n- Durations use a restricted ISO-8601 grammar. `P1D` and `PT24H` are **not** interchangeable: `P1D` runs anchor to anchor and spans 23, 24 or 25 real hours across a daylight-saving transition, and the written form is what makes a resource day-based.\n- Timezones must be named IANA zones. A fixed offset such as `+02:00` is rejected, because an offset carries no daylight-saving rules.\n- Weekdays are Monday = 0, Sunday = 6 — matching neither Postgres nor JavaScript.\n- Timestamps carry an offset: `2026-07-20T09:00:00+02:00`.\n- Errors always have the shape `{ error, message, details? }`.\n\nEvery request carries an API key in an `Authorization: Bearer` header. A key belongs to one tenant and sees only that tenant's rows; another tenant's id answers `404`, never `403`.\n\nA key holds a set of scopes, and each route requires exactly one of them. No scope implies another: `bookings.write` does not confer `bookings.read`, which is what lets a partner channel create bookings without being able to list the tenant's calendar. Keys are issued from the console.\n\nEvery reply the rate limiter has counted carries `x-ratelimit-limit`, `x-ratelimit-remaining` and `x-ratelimit-reset`, so a caller can pace itself before it is refused. A `401` or `403` is answered before the request is counted and carries none of them; a `500` carries them only when the failure came after it."
+    "description": "A domain-agnostic booking engine, working on three abstractions — resource, schedule, booking — with no knowledge of what is being booked.\n\n**Conventions that apply everywhere**\n\n- Date ranges are half-open: `from` inclusive, `to` exclusive, at most 366 days.\n- Durations use a restricted ISO-8601 grammar. `P1D` and `PT24H` are **not** interchangeable: `P1D` runs anchor to anchor and spans 23, 24 or 25 real hours across a daylight-saving transition, and the written form is what makes a resource day-based.\n- Timezones must be named IANA zones. A fixed offset such as `+02:00` is rejected, because an offset carries no daylight-saving rules.\n- Weekdays are Monday = 0, Sunday = 6 — matching neither Postgres nor JavaScript.\n- Timestamps carry an offset: `2026-07-20T09:00:00+02:00`.\n- Errors always have the shape `{ error, message, details? }`.\n\nEvery request carries an API key in an `Authorization: Bearer` header. A key belongs to one tenant and sees only that tenant's rows; another tenant's id answers `404`, never `403`.\n\nA key holds a set of scopes, and each route requires exactly one of them. No scope implies another: `bookings.write` does not confer `bookings.read`, which is what lets a partner channel create bookings without being able to list the tenant's calendar. Keys are issued from the console.\n\nEvery reply the rate limiter has counted carries `x-ratelimit-limit`, `x-ratelimit-remaining` and `x-ratelimit-reset`, so a caller can pace itself before it is refused. A `401` or `403` is answered before the request is counted and carries none of them; a `500` carries them only when the failure came after it.\n\nAn address that fails authentication 30 times in a minute is refused `429` with `Retry-After` and none of the three, whatever key it sends next, until the minute ends."
   },
   "components": {
     "schemas": {}
@@ -62,7 +62,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -75,22 +75,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -117,7 +114,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -660,7 +657,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -673,22 +670,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -715,7 +709,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -1058,7 +1052,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -1071,22 +1065,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -1113,7 +1104,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -1517,7 +1508,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -1530,22 +1521,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -1572,7 +1560,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -2160,7 +2148,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -2173,22 +2161,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -2215,7 +2200,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -2751,7 +2736,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -2764,22 +2749,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -2806,7 +2788,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -3272,7 +3254,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -3285,22 +3267,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -3327,7 +3306,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -3960,7 +3939,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -3973,22 +3952,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -4015,7 +3991,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -4447,7 +4423,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -4460,22 +4436,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -4502,7 +4475,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -5107,7 +5080,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -5120,22 +5093,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -5162,7 +5132,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -5634,7 +5604,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -5647,22 +5617,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -5689,7 +5656,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -6108,7 +6075,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -6121,22 +6088,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -6163,7 +6127,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -6974,7 +6938,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -6987,22 +6951,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -7029,7 +6990,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -7585,7 +7546,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -7598,22 +7559,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -7640,7 +7598,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -8046,7 +8004,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -8059,22 +8017,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -8101,7 +8056,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -8763,7 +8718,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -8776,22 +8731,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -8818,7 +8770,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -9484,7 +9436,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -9497,22 +9449,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -9539,7 +9488,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -10205,7 +10154,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -10218,22 +10167,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -10260,7 +10206,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -10926,7 +10872,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -10939,22 +10885,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -10981,7 +10924,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -11746,7 +11689,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -11759,22 +11702,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -11801,7 +11741,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
@@ -12298,7 +12238,7 @@
             }
           },
           "429": {
-            "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`",
+            "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`",
             "headers": {
               "retry-after": {
                 "schema": {
@@ -12311,22 +12251,19 @@
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests this key may send per minute",
-                "required": true
+                "description": "Requests this key may send per minute"
               },
               "x-ratelimit-remaining": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Requests left in the current minute",
-                "required": true
+                "description": "Requests left in the current minute"
               },
               "x-ratelimit-reset": {
                 "schema": {
                   "type": "integer"
                 },
-                "description": "Seconds until the current minute's count resets",
-                "required": true
+                "description": "Seconds until the current minute's count resets"
               }
             },
             "content": {
@@ -12353,7 +12290,7 @@
                       "description": "Context, when there is any."
                     }
                   },
-                  "description": "`rate_limited` — The per-key limit for this minute is used up; carries `Retry-After`"
+                  "description": "`rate_limited` — The per-key limit for this minute is used up, or this address has failed authentication too often; carries `Retry-After`"
                 },
                 "examples": {
                   "rate_limited": {
