@@ -20,7 +20,7 @@ import { tableWithHeader, unwrap } from '../fixtures/markdown.js'
 
 const CONVENTIONS = '../../docs/conventions.md'
 const README = '../../README.md'
-const KIT_HTTP_RULE = '../../node_modules/dev-kit/rules/http.md'
+const KIT_HTTP_RULE = '../../node_modules/charter/domains/backend/rules/http.md'
 
 function camelCase(variable: string): string {
   const [first, ...rest] = variable.toLowerCase().split('_')

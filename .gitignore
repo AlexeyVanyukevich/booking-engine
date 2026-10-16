@@ -21,3 +21,6 @@ playwright-report/
 
 # Scratch for plan execution: ledgers, briefs, review packages. Git history is the record.
 .superpowers/
+
+# The shared path-scoped rules, mirrored from node_modules by the session's start hook.
+.claude/rules/charter/

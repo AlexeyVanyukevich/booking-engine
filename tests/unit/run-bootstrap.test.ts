@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 /**
- * `./run` takes its helpers from dev-kit, so before the first `npm install` it has nothing to
+ * `./run` takes its helpers from charter, so before the first `npm install` it has nothing to
  * source — and no `die` to explain itself with. A host with Docker and no Node, which the
  * README's Docker-only path describes, must get an instruction rather than a shell error.
  */
