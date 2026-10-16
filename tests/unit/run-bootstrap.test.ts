@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -35,5 +35,23 @@ describe('./run before dependencies are installed', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+/**
+ * The kit's README orders the frame as node, dependencies, plugins, hooks. Keeping the four in
+ * one function means a scenario cannot install dependencies and skip the commit-msg hook.
+ */
+describe("./run's frame", () => {
+  it('installs dependencies in one place, followed by the plugins and the commit-msg hook', () => {
+    const source = readFileSync(fileURLToPath(new URL('../../run', import.meta.url)), 'utf8')
+    expect(source.match(/\bneed_deps\b/g)).toHaveLength(1)
+
+    const body = /^need_toolchain\(\) \{\n([\s\S]*?)\n\}/m.exec(source)?.[1] ?? ''
+    const order = ['need_node', 'need_deps', 'need_plugins', 'need_hooks'].map((call) =>
+      body.indexOf(call),
+    )
+    expect(order.every((index) => index >= 0)).toBe(true)
+    expect(order).toEqual(order.toSorted((a, b) => a - b))
   })
 })

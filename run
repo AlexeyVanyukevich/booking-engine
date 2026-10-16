@@ -52,6 +52,15 @@ need_local_env() {
   note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
 }
 
+# The kit's frame, in the kit README's order: need_plugins reads the settings with node, and the
+# commit-msg hook it installs calls into node_modules.
+need_toolchain() {
+  need_node
+  need_deps
+  need_plugins
+  need_hooks
+}
+
 # Scenarios that talk to an already-running engine must find it, not assume the default.
 # A stack started as `PORT=3100 ./run up` is invisible to a later `./run docs` in a fresh
 # shell, which would then point at whatever else owns 3000 — on this machine, a different
@@ -149,7 +158,7 @@ wait_for_console() {
 # Starting either alone leaves you unable to use either.
 
 local_prepare() {
-  need_docker; need_node; need_deps; need_local_env
+  need_docker; need_toolchain; need_local_env
   step "Starting the database"
   docker compose up -d db
   wait_for_db
@@ -317,13 +326,13 @@ cmd_reset() {
 }
 
 cmd_test() {
-  need_docker; need_node; need_deps
+  need_docker; need_toolchain
   note "The suite starts its own throwaway Postgres; the compose database is not used."
   npm run --silent test
 }
 
 cmd_test_ui() {
-  need_docker; need_node; need_deps
+  need_docker; need_toolchain
   if [ ! -d "$HOME/Library/Caches/ms-playwright" ] && [ ! -d "$HOME/.cache/ms-playwright" ]; then
     die "No browser binary for Playwright." "Run: npx playwright install chromium"
   fi
@@ -332,12 +341,12 @@ cmd_test_ui() {
 }
 
 cmd_test_watch() {
-  need_docker; need_node; need_deps
+  need_docker; need_toolchain
   npm run --silent test:watch
 }
 
 cmd_check() {
-  need_node; need_deps
+  need_toolchain
   step "Type checking"
   npx tsc --noEmit
   ok "No type errors"
@@ -388,7 +397,7 @@ cmd_docs() {
 # Rewrites the committed OpenAPI document from the route schemas. Needs no running engine and
 # no database: the generator walks the registered routes, and no handler is called.
 cmd_openapi() {
-  need_node; need_deps
+  need_toolchain
   npx tsx scripts/openapi.ts
   ok "openapi.json is current — commit it with the schema change that moved it"
 }
@@ -397,7 +406,7 @@ cmd_openapi() {
 # come from tests/fixtures/datasets/, the same source the automated suite reads, so editing
 # a dataset changes this run too.
 cmd_smoke() {
-  need_node; need_deps
+  need_toolchain
   resolve_running_port
   assert_engine_answers
   # $1 is an optional suite filter, passed straight through.
