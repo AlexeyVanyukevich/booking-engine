@@ -37,6 +37,10 @@ runs as a **separate entrypoint bound to `127.0.0.1`** and has no authentication
 that is safe only because the port is unreachable from elsewhere, which is why the bind address
 is hard-coded rather than configurable.
 
+Authentication runs before the per-key rate limiter, so a rejected key is never counted
+against a key; failed authentications are counted per client address instead, and an address
+past `AUTH_FAILURES_PER_MINUTE` is refused before its key is looked up.
+
 Where the console cannot be reached — a consumer's test harness, or the compose stack, where
 the console's loopback bind leaves no published port that reaches it — `issue-keys` does the
 same job as a one-shot command: it creates a tenant, issues one key per preset, prints them as

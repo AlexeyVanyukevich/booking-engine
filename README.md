@@ -168,6 +168,13 @@ The presets answer the question "what is this key for":
 Presets are expanded at issue time and the name is not stored, so editing a preset later
 cannot change a key already in the field.
 
+### Behind a reverse proxy
+
+Both rate limits count by client address, and behind a proxy every request arrives from the
+proxy. Set `TRUST_PROXY` to the proxy's address or CIDR — a comma-separated list for several
+hops — and its `X-Forwarded-For` names the client. Left empty, one caller sending bad keys
+would have every caller behind the same proxy refused for up to a minute.
+
 ## Testing against the engine
 
 A consumer's tests can run against a real engine, pinned to a release, with one call. Each
