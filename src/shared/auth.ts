@@ -77,8 +77,9 @@ export function registerAuth(app: FastifyInstance, service: TenantService): void
    * Failed authentications, counted per address. Authentication runs before the per-key limiter,
    * so without this a caller holding no credential could make the engine look a key up once per
    * request, without limit. Only failures count, so a consumer's valid traffic never spends this
-   * budget; every kind of failure counts alike, as every kind answers alike. It shares the
-   * limiter's store, which is why its key is prefixed.
+   * budget; every kind of failure counts alike, as every kind answers alike. Given options,
+   * `createRateLimit` keeps the count in a child of the limiter's store — its own map in memory,
+   * its own namespace in Redis — so nothing the per-key limiter counts can reach it.
    */
   const failures = app.createRateLimit({
     max: app.config.authFailuresPerMinute,

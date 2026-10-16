@@ -211,8 +211,9 @@ Failed authentication is counted per client address, at `AUTH_FAILURES_PER_MINUT
 budget, every request from it that needs a key is answered `429 rate_limited` with
 `Retry-After` before the key is looked up — a valid key included, since telling it is valid
 would take the lookup the refusal exists to save — until the minute ends. Public routes are not
-affected. The count lives in the rate limiter's store, under a prefix no header can spell, so a
-caller cannot spend another address's budget.
+affected. The count is kept in a child of the rate limiter's store, apart from every per-key
+count, and the per-key limiter prefixes its own keys, so no `Authorization` header can spell an
+address and spend another caller's count.
 
 Behind a reverse proxy every caller arrives from the proxy's address, and would share one
 count. `TRUST_PROXY` names the proxies whose `X-Forwarded-For` is believed; the client is the

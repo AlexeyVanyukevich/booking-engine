@@ -4,7 +4,8 @@ import type { AppConfig } from '../../../src/config.js'
  * Who sends a request. `first` and `second` are two keys on one tenant, which is what shows the
  * per-key limit is counted per key and not per tenant. `narrow` is a valid key without
  * `resources.read`. `malformed` could never have been issued; `unknown` is well formed and was
- * not. `forged` spells the failure key of `ADDRESS_A` in its header.
+ * not. `forged` sends `ADDRESS_B` as its whole header, which an unprefixed store key would
+ * share with a keyless request from `ADDRESS_B`.
  */
 export type Caller =
   'first' | 'second' | 'narrow' | 'malformed' | 'unknown' | 'anonymous' | 'forged'
@@ -168,14 +169,13 @@ export const rateLimitScenarios: RateLimitScenario[] = [
     expected: [401, 200, 429],
   },
   {
-    name: "a header spelling an address's failure key does not spend it",
-    config: { authFailuresPerMinute: 1 },
+    name: "a header spelling an address does not spend that address's count",
+    config: { rateLimitPerMinute: 1 },
     requests: [
       { caller: 'forged', path: '/health' },
-      { caller: 'forged', path: '/health' },
-      'first',
+      { caller: 'anonymous', path: '/health', from: ADDRESS_B },
     ],
-    expected: [200, 200, 200],
+    expected: [200, 200],
   },
   {
     name: 'behind a trusted proxy, failures are counted per client',
