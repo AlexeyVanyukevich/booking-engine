@@ -1,5 +1,5 @@
 {
-  "extends": "dev-kit/tsconfig/node",
+  "extends": "charter/stacks/node/tsconfig",
   "compilerOptions": {
     "esModuleInterop": true,
     "outDir": "dist",

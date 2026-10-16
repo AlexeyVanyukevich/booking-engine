@@ -23,18 +23,13 @@ standing, and the last task of a slice updates it wherever a rule changed.
 
 ## Conventions
 
-The shared ones come from the `dev-kit` package, one import per rule. A shared rule is corrected
-in the kit, never restated here. Where the engine's published contract cannot follow one,
-`docs/conventions.md` lists the departure beside the rule with its reason, and a test keeps that
-list exact — today one row, `http.md`'s `conflict`. Declining a whole rule means deleting its
-line and saying why in `CONTRIBUTING.md`.
+The shared ones come from the `charter` package, by module: `core` through the import below,
+and the modules [charter.json](charter.json) names by path, mirrored into
+`.claude/rules/charter/` by the session's start hook. A shared rule is corrected in the kit,
+never restated here. Where the engine's published contract cannot follow one,
+`docs/conventions.md` lists the departure beside the rule with its reason, and a test keeps
+that list exact. Declining a shared rule means dropping its module from `charter.json` and
+saying why in `CONTRIBUTING.md`; a single rule inside a module is followed or listed as a
+departure.
 
-@node_modules/dev-kit/rules/typescript.md
-@node_modules/dev-kit/rules/http.md
-@node_modules/dev-kit/rules/layout.md
-@node_modules/dev-kit/rules/testing.md
-@node_modules/dev-kit/rules/commits.md
-@node_modules/dev-kit/rules/documentation.md
-@node_modules/dev-kit/rules/writing.md
-@node_modules/dev-kit/rules/review.md
-@node_modules/dev-kit/rules/backlog.md
+@node_modules/charter/core/rules.md

@@ -4,27 +4,6 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
-## The shared rules are pinned at dev-kit 1.2.1
-
-- Where: `package.json`, `"dev-kit": "github:AlexeyVanyukevich/dev-kit#v1.2.1"`; the
-  `@node_modules/dev-kit/rules/…` imports in `CLAUDE.md`
-- Found: 2026-10-12, in a prompt audit of the instruction files
-- Problem: the kit is at 2.2.2. 2.0.0 moved every path a consumer writes, so no rule correction
-  made since reaches this project — the release rule, the dataset-table scope, the 2.2.2 trim of
-  the commits and writing rules.
-- Impact: sessions here follow older rule text than the sibling projects on 2.x. Upgrading is a
-  major bump: replace each import as the kit README's "Migrating from 1.x" table says, and
-  `sh/lib.sh` with `common/lib.sh` in the `./run` bootstrap.
-
-## `CLAUDE.md` counts the convention departures, and nothing keeps the count true
-
-- Where: `CLAUDE.md`, "Conventions", lines 29–30: "today one row, `http.md`'s `conflict`"
-- Found: 2026-10-12, in a prompt audit of the instruction files
-- Problem: true today. The test keeps `docs/conventions.md` exact, not this sentence, so a second
-  departure leaves the count wrong with nothing failing.
-- Impact: low — a stale number in a file every session loads. Drop the count and keep "a test
-  keeps that list exact".
-
 ## Concurrent failed authentications can pass the address's limit
 
 - Where: `src/shared/auth.ts`, the `onRequest` hook — the failure count is read, then the key

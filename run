@@ -12,16 +12,16 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 #
 # Until the kit is installed there is no `die`, so a missing npm is explained by hand here: a
 # host with Docker alone would otherwise see only `npm: command not found`.
-if [ ! -f node_modules/dev-kit/sh/lib.sh ]; then
+if [ ! -f node_modules/charter/core/lib.sh ]; then
   if ! command -v npm >/dev/null 2>&1; then
-    printf '✗ ./run needs Node.js 24 and npm: its helpers come from the dev-kit package.\n' >&2
+    printf '✗ ./run needs Node.js 24 and npm: its helpers come from the charter package.\n' >&2
     printf '  Install Node 24 (see .nvmrc), or run the stack on Docker alone:  docker compose up -d --build\n' >&2
     exit 1
   fi
   printf '→ Installing dependencies, which ./run itself needs\n'
   npm install
 fi
-source node_modules/dev-kit/sh/lib.sh
+source node_modules/charter/core/lib.sh
 
 # Recorded before `.env` is loaded, because afterwards there is no telling the two apart, and
 # `resolve_running_port` needs to: an explicit port on the command line is an instruction,
@@ -41,7 +41,7 @@ RUN_STATE=".run"
 COMPOSE_DB_URL="postgres://postgres:postgres@localhost:${DB_HOST_PORT}/booking_engine"
 
 # Read by the kit's `need_node`: the floor is its default of 24, the pointer to `.nvmrc` is ours.
-DEVKIT_NODE_HINT="Install Node 24 or newer — see .nvmrc."
+CHARTER_NODE_HINT="Install Node 24 or newer — see .nvmrc."
 
 # ── preflight ────────────────────────────────────────────────────────────────
 

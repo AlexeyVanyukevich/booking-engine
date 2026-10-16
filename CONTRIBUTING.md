@@ -1,8 +1,8 @@
 # Contributing
 
 The shared conventions — commit messages, merging, specs and plans, tests, layout — are the
-`dev-kit` rules imported by [CLAUDE.md](CLAUDE.md). This file holds what is particular to this
-repository.
+`charter` rules of the modules [charter.json](charter.json) names. This file holds what is
+particular to this repository.
 
 ## Language
 
