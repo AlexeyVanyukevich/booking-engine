@@ -18,6 +18,7 @@ import { TenantRepository } from './modules/tenants/tenant.repository.js'
 import { TenantService } from './modules/tenants/tenant.service.js'
 import { registerAuth } from './shared/auth.js'
 import { RateLimitedError, registerErrorHandler } from './shared/errors.js'
+import { limiterKey } from './shared/rate-limit.js'
 import { liftRequiredHeaders, registerResponseRules } from './shared/responses.js'
 
 export interface AppDeps {
@@ -94,13 +95,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // Per key, so one tenant cannot exhaust the engine for the others. The plugin attaches its
   // hook to each route, and route hooks run after the application-level authentication hook,
-  // so a request whose key is rejected is never counted. What is counted is keyed on the raw
-  // header, or on the address for a public route called without one. The plugin throws what
-  // the builder returns, so it must be an `AppError` to answer 429 rather than 500.
+  // so a request whose key is rejected is never counted. What is counted is keyed on the
+  // header, or on the address for a public route called without one — see `limiterKey` for why
+  // each key is prefixed. The plugin throws what the builder returns, so it must be an
+  // `AppError` to answer 429 rather than 500.
   await app.register(fastifyRateLimit, {
     max: deps.config.rateLimitPerMinute,
     timeWindow: '1 minute',
-    keyGenerator: (request) => request.headers.authorization ?? request.ip,
+    keyGenerator: limiterKey,
     errorResponseBuilder: () => new RateLimitedError('Too many requests; slow down and retry'),
   })
 
