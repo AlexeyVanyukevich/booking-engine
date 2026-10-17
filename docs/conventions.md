@@ -8,8 +8,9 @@ Other documents link here instead of restating these rules. If you find a rule s
 twice, the copy is the one to delete.
 
 Rules that hold across projects — the error shape, the four-file module layout, tests first,
-datasets over test bodies, commit messages — live in the shared `dev-kit` package and are
-imported by [CLAUDE.md](../CLAUDE.md). This document holds what only the engine knows, and
+datasets over test bodies, commit messages — live in the shared `charter` package: `core`
+imported by [CLAUDE.md](../CLAUDE.md), and the modules [charter.json](../charter.json) names
+loaded by path. This document holds what only the engine knows, and
 where a section below builds on a shared rule it says which.
 
 - System design: [architecture.md](architecture.md)

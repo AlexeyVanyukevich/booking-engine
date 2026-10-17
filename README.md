@@ -33,8 +33,10 @@ Reference, consulted rather than read through:
 - Docker — required for the test suite, which runs against a real Postgres via
   Testcontainers, and sufficient on its own to run the whole engine with
   `docker compose up -d --build`
-- Node.js 24 — for `./run`, whose helpers come from the `dev-kit` dev dependency and which
-  installs dependencies on first use; and to run the service outside a container
+- Node.js 24 — for `./run`, whose helpers come from the `charter` dev dependency and which
+  installs dependencies on first use; to run the service outside a container; and for an
+  agent session's shared rules, which the session's start hook mirrors from `node_modules`,
+  so `npm install` (or any `./run` scenario) must have run once
 - PostgreSQL 16+ — only to run the service against a database outside Docker
 
 Node 24 is the current active LTS, supported into 2028; Node 22 has moved to maintenance.
@@ -42,7 +44,7 @@ The version is declared in [.nvmrc](.nvmrc) and enforced by `engines` in `packag
 the container image pins the minor rather than floating on a tag, so a rebuild a year from
 now produces the same runtime.
 
-Building the image needs GitHub as well as the npm registry: `tsconfig.json` extends `dev-kit`,
+Building the image needs GitHub as well as the npm registry: `tsconfig.json` extends `charter`,
 a dev dependency installed from its git host at a pinned tag. The build stage fetches it; the
 runtime image installs production dependencies only and does not contain it.
 
