@@ -11,4 +11,8 @@ export const kitFreeFiles = [
   'CONTRIBUTING.md',
   'tests/unit/documented-tables.test.ts',
   'tests/unit/run-bootstrap.test.ts',
+  'README.md',
+  'docs/architecture.md',
+  'docs/conventions.md',
+  'docs/backlog.md',
 ] as const

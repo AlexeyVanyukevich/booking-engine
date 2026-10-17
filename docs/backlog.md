@@ -4,6 +4,26 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## The key console is not held to the frontend accessibility rules
+
+- Where: `charter.json`, which takes no `frontend` or `playwright` module; `tests/ui/`
+- Found: 2026-10-17, while moving the shared rules to charter
+- Problem: the console is a web interface, but no session reads charter's WCAG 2.2 AA or
+  journeys rules. `tests/ui/` runs no axe-core scan and no keyboard-only journey, and
+  `@axe-core/playwright` is not installed.
+- Impact: regressions an axe-core scan or a keyboard run would catch go unnoticed. Taking the
+  two modules as they are would also load `accessibility.md`, scoped to `src/**`, for every
+  backend file, so the console may want splitting out first.
+
+## oxlint is not adopted
+
+- Where: no `.oxlintrc.json`; `oxlint` and `oxlint-tsgolint` are not installed
+- Found: 2026-10-17, while moving the shared rules to charter
+- Problem: charter's `typescript`, `node` and `vitest` stacks ship oxlint configs that catch
+  unhandled promises and non-exhaustive switches, and nothing here runs them.
+- Impact: those bugs reach review uncaught. The kit measured 36–78 findings on adoption in three
+  projects, so adopting is a slice with triage, not a config line.
+
 ## Concurrent failed authentications can pass the address's limit
 
 - Where: `src/shared/auth.ts`, the `onRequest` hook — the failure count is read, then the key
