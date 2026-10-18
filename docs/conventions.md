@@ -123,8 +123,9 @@ Every error response has the same shape:
 { "error": "schedule_overlap", "message": "…", "details": {} }
 ```
 
-The shape, `additionalProperties: false` on every body and the translation of framework 4xx
-into this shape are the shared `http.md` rule. The table below is every code the engine can
+The shape, a body schema that rejects unknown fields and the translation of framework 4xx into
+this shape are the shared `http.md` rule; that the schema is TypeBox with
+`additionalProperties: false` is the `node` stack's `typescript.md`. The table below is every code the engine can
 emit at a fixed status — `documented-tables.test.ts` asserts it against the code, and consumers
 read it as the contract. `bad_request`, which has no fixed status, is explained in prose further
 down.
@@ -440,9 +441,9 @@ terminal state.
 
 ## Testing conventions
 
-The shared `testing.md` rule applies: tests first, a real PostgreSQL through Testcontainers,
-data in datasets rather than test bodies, facts about the world derived rather than remembered.
-What follows is where those live in this repository.
+The shared `testing.md` rule applies — tests first, data in datasets rather than test bodies,
+facts about the world derived rather than remembered — and the `backend` module's
+`database-tests.md` adds a real PostgreSQL through Testcontainers. What follows is where those live in this repository.
 
 Datasets are typed tables in `tests/fixtures/datasets/`, consumed by a parameterised runner
 (`it.each`); shared entities go behind factories in `tests/fixtures/`. The DST transition dates
