@@ -107,6 +107,10 @@ migrating immediately afterwards fails intermittently.
 Prerequisites are checked up front and reported as instructions rather than symptoms — a
 stopped Docker daemon says so, instead of surfacing a connection refused ten seconds later.
 
+Every scenario that installs dependencies also installs, where Claude Code is present, the
+plugins `.claude/settings.json` turns on, and the shared kit's `commit-msg` hook, which refuses a
+message that breaks the commit rule and says which part.
+
 The npm scripts still work — `npm run dev`, `npm run up`, `npm test` — they delegate to the
 same script, so both habits are fine.
 

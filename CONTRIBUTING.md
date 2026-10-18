@@ -1,8 +1,8 @@
 # Contributing
 
-The shared conventions — commit messages, merging, specs and plans, tests, layout — are the
-`charter` rules of the modules [charter.json](charter.json) names. This file holds what is
-particular to this repository.
+The shared conventions — commit messages, merging, specs and plans, tests, layout — are
+`charter`'s rules: `core`, imported by [CLAUDE.md](CLAUDE.md), and the modules
+[charter.json](charter.json) names. This file holds what is particular to this repository.
 
 ## Language
 
@@ -34,6 +34,9 @@ From the repository root:
 
 That type-checks, verifies formatting and runs the full suite. It needs Docker running —
 the integration tests start their own Postgres — but no database prepared.
+
+The message is checked too: the `commit-msg` hook `./run` installs refuses one that breaks the
+shared commit rule.
 
 ## Specs and plans
 
