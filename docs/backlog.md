@@ -4,6 +4,28 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## `CONTRIBUTING.md`'s scope table names none of the scopes in use
+
+- Where: `CONTRIBUTING.md`, "Commit scopes"
+- Found: 2026-10-17, in the review of the move to charter
+- Problem: the table lists `api`, `db`, `console`, `worker`, `docker` and `deps`; no commit
+  uses any of them. History uses `openapi` (9), `rate-limit` (4), `run`, `errors`, `config`,
+  `backlog`, `availability` and `auth`, none of which the table lists. See
+  `git log --format=%s | sed -nE 's/^[a-z]+\(([a-z0-9-]+)\)!?:.*/\1/p' | sort | uniq -c`.
+- Impact: a contributor picking a scope from the table writes one no other commit uses, and
+  the table describes a convention nobody follows.
+
+## `src/modules/schedule/` is singular beside plural modules
+
+- Where: `src/modules/schedule/`
+- Found: 2026-10-17, in the review of the move to charter
+- Problem: charter's `layout.md` names a module's directory in the plural and its files in the
+  singular. `bookings/`, `resources/`, `exceptions/` and `tenants/` follow it; `schedule/` does
+  not, and a resource has many schedule rows, so it is not a mass noun the way `availability`
+  is. The charter spec's table called it one.
+- Impact: low — one directory out of line with the rule a session now reads for every `src/`
+  file. A rename touches every import of the module.
+
 ## The key console is not held to the frontend accessibility rules
 
 - Where: `charter.json`, which takes no `frontend` or `playwright` module; `tests/ui/`
