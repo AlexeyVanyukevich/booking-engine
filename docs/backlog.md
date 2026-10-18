@@ -4,6 +4,94 @@ What is known to be wrong and not yet fixed, newest first. The rule for this fil
 `backlog.md`, imported by [CLAUDE.md](../CLAUDE.md): one entry per finding, deleted by the
 commit that fixes it.
 
+## A booking whose hold has run out is still reported as `held`
+
+- Where: `src/modules/bookings/booking.repository.ts`, `list()` and `findById()`, which read
+  `status` as stored; availability's occupancy query, which excludes a lapsed hold by predicate
+- Found: 2026-10-18, while assessing the engine for a group-fitness consuming application
+- Problem: a hold past its `held_until` becomes `expired` only when a write on its resource or
+  the background sweep reaches it. Until then every read reports it as `held`. Run the API with
+  `HOLD_SWEEP_ENABLED=false` and no worker, create a booking with `hold: true` and
+  `hold_minutes: 1`, wait two minutes: `GET /bookings/:id`, both listings and `?status=held`
+  answer `held`, while availability shows the slot free. With the sweep on, the window is up to
+  `HOLD_SWEEP_INTERVAL_SECONDS`.
+- Impact: two reads disagree about one booking. A consumer counting places from a listing
+  counts a place availability has already released, and a "your hold is still active" screen is
+  wrong for up to a minute. Reporting `expired` wherever `held_until <= now()`, as occupancy
+  already decides, would close it.
+
+## Nothing stops one person being booked on two resources at once
+
+- Where: `bookings_no_overlap` and the `shared` count in `src/modules/bookings/`, both scoped
+  to one `resource_id`; nothing in the data model relates two resources except `pool_id`
+- Found: 2026-10-18, while assessing the engine for a group-fitness consuming application
+- Problem: a coach who gives one-to-one sessions and teaches a group class is two resources,
+  and the engine does not know they share a person; a room shared by two classes is the same.
+  Book the coach's one-to-one resource at 18:00 and the class resource at 18:00: both answer
+  `201`. Not recorded among the deliberate limitations either.
+- Impact: every consumer with a shared person or room must keep the two consistent itself.
+  Removing the class hours from the one-to-one schedule works; a blocking booking on the coach
+  is a second, non-atomic write that must also land on the coach's slot grid, or it is refused
+  `invalid_slot_boundary`. Closing it is a design change — resources that consume another's
+  occupancy — and close to the atomic multi-resource booking recorded in spec 4, §12.
+
+## Availability does not say how many places are left on a `shared` slot
+
+- Where: `src/modules/availability/availability.schemas.ts`, `AvailabilitySlot`; the
+  "how many members are free" row of the deliberate limitations in `docs/conventions.md`
+- Found: 2026-10-18, while assessing the engine for a group-fitness consuming application
+- Problem: a slot carries only `available`. The limitations row covers free pool members and
+  defers "a decision about the other modes", so for `shared` the gap is neither accepted nor
+  planned. "3 places left" has to be counted from a listing, by overlap per slot, dropping
+  `held` rows whose `held_until` has passed (see the entry above).
+- Impact: every consumer showing remaining places reimplements occupancy, the rule the engine
+  already computes in `countOccupying`, and gets it wrong in the lapsed-hold case. A count field
+  on the slot is a contract change every consumer receives.
+
+## Booking notice, horizon and cancellation cutoff are recorded only in a spec
+
+- Where: `docs/conventions.md`, the deliberate limitations, which list only "bookings in the
+  past are accepted"; spec 4 (multitenancy), "The driving case" and §12
+- Found: 2026-10-18, while assessing the engine for a group-fitness consuming application
+- Problem: spec 4 left minimum notice and booking horizon to the consumer, on one condition —
+  the API key never reaches a browser, or every consumer-side policy becomes advisory. Neither
+  the policy nor the condition is in the living documents, and a cancellation cutoff ("not
+  within 12 hours") is recorded nowhere. Cancel a booking that starts in ten minutes: `200`.
+- Impact: a consumer reading `architecture.md` and `conventions.md` cannot learn that these
+  rules are its job, nor that shipping a key in a mobile or web client moves them into the
+  engine. A row in the limitations table carrying the condition would record it.
+
+## The engine emits no events; consumers must poll
+
+- Where: no webhook, outbox or notification mechanism anywhere in `src/`; spec 4's out-of-scope
+  table, "The owner polls. Revisit at the third tenant."
+- Found: 2026-10-18, while assessing the engine for a group-fitness consuming application
+- Problem: a hold expiring, a booking cancelled or a place freeing up changes state without
+  telling anyone. The decision lives only in a spec, with a trigger — a third tenant — that no
+  living document tracks.
+- Impact: reminders and "a place opened up" messages need polling or the consumer's own
+  bookkeeping, and an expiry made by the sweep is invisible to a consumer that did not cause it.
+
+## No recurring bookings
+
+- Where: `POST /resources/:id/bookings`, which takes one interval
+- Found: 2026-10-18, while assessing the engine for a group-fitness consuming application
+- Problem: "every Tuesday at 18:00 for ten weeks" is ten requests, each succeeding or failing
+  alone. Recorded nowhere, as a limitation or as a decision.
+- Impact: a consumer offering a course or a standing slot books occurrence by occurrence and
+  decides itself what a partial failure means. The multi-resource booking group in spec 4, §12
+  would carry the same all-or-nothing shape.
+
+## No waitlist
+
+- Where: the booking lifecycle in `docs/architecture.md`, which has no waiting state
+- Found: 2026-10-18, while assessing the engine for a group-fitness consuming application
+- Problem: a full slot answers `409 slot_unavailable`, and the engine keeps no queue of who
+  wanted it. Recorded nowhere, as a limitation or as a decision.
+- Impact: a consumer with full classes keeps its own queue and, with no events, must poll to
+  learn a place has freed — then race any other caller for it, since the engine gives the
+  queue's head no priority.
+
 ## `CONTRIBUTING.md`'s scope table names none of the scopes in use
 
 - Where: `CONTRIBUTING.md`, "Commit scopes"
